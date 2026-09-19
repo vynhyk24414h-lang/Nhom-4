@@ -1,28 +1,23 @@
-# DỰ ÁN: GÓI PHẦN MỀM ỨNG DỤNG TRONG TÀI CHÍNH - NHÓM 4
+# XÂY DỰNG TELEGRAM BOT TÍN HIỆU ĐẦU TƯ CHỨNG KHOÁN (FINTECH BOT) - NHÓM 4
 
-## 📝 Giới thiệu
-Mô tả ngắn về ứng dụng (Ví dụ: Phần mềm tính toán lãi suất vay vốn ngân hàng và lập kế hoạch tài chính cá nhân).
+---
 
-## 🛠 Công nghệ sử dụng
-- Ngôn ngữ: [Ví dụ: Python/JavaScript/C#]
-- Framework: [Ví dụ: React/Flask/WinForms]
-- Database: [Ví dụ: SQLite/MongoDB]
+## 👥 DANH SÁCH THÀNH VIÊN & PHÂN CÔNG
+| STT | Họ và Tên | MSSV | Lớp | Vai trò / Nhiệm vụ |
+|:---:|:---|:---:|:---:|:---|
+| 1 | **Nguyễn Hà Yến Vy** | **K244141706** | **K24414H** | 
+| 2 | Trần Bùi Phương Uyên | K234141688 | K23414A | 
+| 3 | Huỳnh Ngọc Cường | K244141601 | K24414 | 
+| 4 | Đặng Bảo Huân | K244141615 | K24414 | 
+| 5 | Võ Thị Tuyết Kha | K244141622 | K24414 | 
+| 6 | Võ Duy Tài | K244141643 | K24414 | 
 
-## 🚀 Hướng dẫn cài đặt chi tiết
+---
 
-### 1. Yêu cầu phần mềm
-- Đã cài đặt [Node.js/Python/...] phiên bản mới nhất.
-- Đã cài đặt Git.
+## 🛠 CÔNG CỤ & CÔNG NGHỆ SỬ DỤNG
+- **Ngôn ngữ lập trình:** [Chưa quyết định - Sẽ cập nhật sau]
+- **Môi trường:** Visual Studio Code
+- **Quản lý mã nguồn:** Git & GitHub
+- **Tài liệu:** Microsoft Word / Excel (Dành cho bảng tính mẫu)
 
-### 2. Các bước cài đặt
-Mở Terminal trong VS Code và chạy các lệnh sau:
-
-```bash
-# Bước 1: Clone dự án
-git clone [Link_GitHub_Của_Bạn]
-
-# Bước 2: Di chuyển vào thư mục dự án
-cd [Tên_Thư_Mục_Dự_Án]
-
-# Bước 3: Cài đặt thư viện (Nếu có)
-npm install  # Hoặc: pip install -r requirements.txt
+---
