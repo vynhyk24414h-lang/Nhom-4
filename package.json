@@ -1,0 +1,12 @@
+{
+  "name": "nhom-4",
+  "version": "1.0.0",
+  "description": "XAY DUNG TELEGRAM BOT TIN HIEU DAU TU CHUNG KHOAN (FINTECH BOT)",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
