@@ -72,10 +72,10 @@ if __name__ == "__main__":
         # Tạo danh sách chứa các mã cổ phiếu
         danh_sach_ma = []
         for item in stats_data:
-            if 'symbol' in item:
-                danh_sach_ma.append(item['symbol'])
-            elif 'Symbol' in item:
-                danh_sach_ma.append(item['Symbol'])
+            # Chỉ lấy các mã thuộc sàn HOSE (HOSTC) hoặc HNX (HASTC)
+            exchange = item.get('Exchange', '')
+            if exchange in ['HOSTC', 'HASTC']:
+                danh_sach_ma.append(item.get('Symbol'))
                 
         if danh_sach_ma:
             print(f"[+] Lấy thành công {len(danh_sach_ma)} mã cổ phiếu.")
