@@ -6,102 +6,99 @@ from backtest import run_backtest
 
 
 # =========================================================
-# TẠO DỮ LIỆU TEST GIẢ LẬP OUTPUT TỪ MODULE TÍNH TOÁN
+# TẠO DỮ LIỆU TEST THEO ĐÚNG CẤU TRÚC FIREANT
 # =========================================================
-# Mục tiêu của bộ dữ liệu:
-# - BUY xuất hiện ngày 05/01
-# - Lệnh mua được khớp ở Open ngày 06/01
-# - Các ngày sau processor vẫn trả HOLD
-# - Chandelier Stop tăng dần
-# - Ngày 08/01, Close thấp hơn trailing stop
-# - Backtest phải tự tạo SELL và bán ở Open ngày 09/01
+# FireAnt HistoricalQuotes trả các cột:
+# Date, Symbol, Open, High, Low, Close, Volume, Value, OpenInt
+#
+# Module tính toán bổ sung:
+# signal, regime
+#
+# Bộ test dùng hơn 22 phiên để Backtest đủ dữ liệu tính:
+# ATR14, GTGD20, ATR22 và Chandelier Stop.
 
-signal_data = pd.DataFrame({
-    "date": [
-        "2026-01-02",
-        "2026-01-05",
-        "2026-01-06",
-        "2026-01-07",
-        "2026-01-08",
-        "2026-01-09"
-    ],
+dates = pd.bdate_range(
+    start="2026-01-02",
+    periods=35
+)
 
-    "ticker": [
-        "FPT",
-        "FPT",
-        "FPT",
-        "FPT",
-        "FPT",
-        "FPT"
-    ],
+rows = []
 
-    "open": [
-        99500,
-        101000,
-        102500,
-        104000,
-        103000,
-        101000
-    ],
+for i, current_date in enumerate(dates):
 
-    "close": [
-        100000,
-        102000,
-        104000,
-        105000,
-        101000,
-        102000
-    ],
+    # Tạo xu hướng tăng giả lập
+    base_price = 100_000 + i * 1_000
 
-    "signal": [
-        "HOLD",
-        "BUY",
-        "HOLD",
-        "HOLD",
-        "HOLD",
-        "HOLD"
-    ],
+    open_price = base_price
+    high_price = base_price + 1_500
+    low_price = base_price - 500
+    close_price = base_price + 500
 
-    # ATR14 dùng để tính quy mô vị thế
-    "atr14": [
-        2500,
-        2500,
-        2500,
-        2500,
-        2500,
-        2500
-    ],
+    # Tạo một phiên giảm mạnh để Close thủng Chandelier Stop
+    if i == 29:
+        open_price = 123_000
+        high_price = 124_000
+        low_price = 114_000
+        close_price = 115_000
 
-    # Giá trị giao dịch trung bình 20 phiên
-    "avg_gtgd20": [
-        5_000_000_000,
-        5_000_000_000,
-        5_000_000_000,
-        5_000_000_000,
-        5_000_000_000,
-        5_000_000_000
-    ],
+    # Các phiên sau cú giảm giữ giá ở vùng thấp hơn
+    elif i > 29:
+        base_price = 115_000 + (i - 30) * 500
+        open_price = base_price
+        high_price = base_price + 800
+        low_price = base_price - 500
+        close_price = base_price + 200
 
-    # Regime = 2: thị trường thuận lợi
-    "regime": [
-        2,
-        2,
-        2,
-        2,
-        2,
-        2
-    ],
+    # BUY sau giai đoạn khởi tạo chỉ báo
+    signal = "BUY" if i == 24 else "HOLD"
 
-    # Chandelier Stop do Module tính toán truyền sang
-    "chandelier_cs": [
-        95000,
-        96000,
-        98000,
-        102000,
-        102000,
-        102000
-    ]
-})
+    rows.append({
+        "Date": current_date.strftime(
+            "%Y-%m-%dT00:00:00Z"
+        ),
+        "Symbol": "FPT",
+        "Open": open_price,
+        "High": high_price,
+        "Low": low_price,
+        "Close": close_price,
+        "Volume": 5_000_000,
+
+        # Cố tình để Value = 0 để kiểm tra cơ chế fallback
+        # GTGD = Close × Volume trong Backtest.
+        "Value": 0.0,
+
+        # FireAnt có OpenInt nhưng Backtest cổ phiếu không sử dụng.
+        "OpenInt": 0,
+
+        # Hai cột do Module tính toán bổ sung.
+        "signal": signal,
+        "regime": 2
+    })
+
+
+signal_data = pd.DataFrame(
+    rows
+)
+
+
+# =========================================================
+# TẠO BENCHMARK VNINDEX GIẢ LẬP THEO CẤU TRÚC FIREANT
+# =========================================================
+
+benchmark_rows = []
+
+for i, current_date in enumerate(dates):
+    benchmark_rows.append({
+        "Date": current_date.strftime(
+            "%Y-%m-%dT00:00:00Z"
+        ),
+        "Symbol": "VNINDEX",
+        "Close": 1_300 + i * 2
+    })
+
+vnindex_data = pd.DataFrame(
+    benchmark_rows
+)
 
 
 # =========================================================
@@ -110,7 +107,7 @@ signal_data = pd.DataFrame({
 
 result = run_backtest(
     signal_data=signal_data,
-    benchmark_input=None,
+    benchmark_input=vnindex_data,
     initial_capital=200_000_000
 )
 
@@ -119,7 +116,9 @@ result = run_backtest(
 # KIỂM TRA KẾT QUẢ TRẢ VỀ
 # =========================================================
 
-print("\nKIỂM TRA MODULE BACKTEST")
+print(
+    "\nKIỂM TRA MODULE BACKTEST - FIREANT"
+)
 
 print(
     f"Portfolio Return: "
@@ -131,6 +130,12 @@ print(
     f"{result['max_drawdown']:.2f}%"
 )
 
+if result["benchmark_return"] is not None:
+    print(
+        f"VNINDEX Return: "
+        f"{result['benchmark_return']:.2f}%"
+    )
+
 print(
     f"Số giao dịch hoàn thành: "
     f"{len(result['trades'])}"
@@ -138,28 +143,62 @@ print(
 
 
 # =========================================================
-# KIỂM TRA CHANDELIER STOP
+# KIỂM TRA EOD + OPEN T+1 + CHANDELIER STOP
 # =========================================================
 
-if len(result["trades"]) == 1:
-
-    trade = result["trades"].iloc[0]
-
-    print("\nTEST CHANDELIER STOP: THÀNH CÔNG")
-
-    print(
-        f"Mua ngày: "
-        f"{trade['buy_date'].date()}"
+if len(result["trades"]) != 1:
+    raise AssertionError(
+        "Kỳ vọng đúng 1 giao dịch hoàn thành."
     )
 
-    print(
-        f"Bán ngày: "
-        f"{trade['sell_date'].date()}"
+trade = result["trades"].iloc[0]
+
+if trade["symbol"] != "FPT":
+    raise AssertionError(
+        "Sai mã cổ phiếu trong kết quả Backtest."
     )
 
-else:
-
-    print(
-        "\nTEST CHANDELIER STOP: "
-        "CHƯA ĐÚNG KỲ VỌNG"
+if trade["sell_reason"] != "CHANDELIER_STOP":
+    raise AssertionError(
+        "Chandelier Stop chưa kích hoạt đúng."
     )
+
+if trade["buy_date"] <= trade["buy_signal_date"]:
+    raise AssertionError(
+        "Lệnh BUY chưa được thực hiện ở phiên T+1."
+    )
+
+if trade["sell_date"] <= trade["sell_signal_date"]:
+    raise AssertionError(
+        "Lệnh SELL chưa được thực hiện ở phiên T+1."
+    )
+
+
+print(
+    "\nTEST FIREANT + EOD + CHANDELIER STOP: THÀNH CÔNG"
+)
+
+print(
+    f"Tín hiệu mua: "
+    f"{trade['buy_signal_date'].date()}"
+)
+
+print(
+    f"Ngày mua T+1: "
+    f"{trade['buy_date'].date()}"
+)
+
+print(
+    f"Tín hiệu bán: "
+    f"{trade['sell_signal_date'].date()}"
+)
+
+print(
+    f"Ngày bán T+1: "
+    f"{trade['sell_date'].date()}"
+)
+
+print(
+    f"Lý do bán: "
+    f"{trade['sell_reason']}"
+)
