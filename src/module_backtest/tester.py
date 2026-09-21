@@ -1,13 +1,20 @@
 # Import pandas để tạo dữ liệu kiểm thử
 import pandas as pd
 
-# Import hàm Backtest trong cùng module
+# Import hàm Backtest trong cùng thư mục
 from backtest import run_backtest
 
 
 # =========================================================
 # TẠO DỮ LIỆU TEST GIẢ LẬP OUTPUT TỪ MODULE TÍNH TOÁN
 # =========================================================
+# Mục tiêu của bộ dữ liệu:
+# - BUY xuất hiện ngày 05/01
+# - Lệnh mua được khớp ở Open ngày 06/01
+# - Các ngày sau processor vẫn trả HOLD
+# - Chandelier Stop tăng dần
+# - Ngày 08/01, Close thấp hơn trailing stop
+# - Backtest phải tự tạo SELL và bán ở Open ngày 09/01
 
 signal_data = pd.DataFrame({
     "date": [
@@ -33,17 +40,17 @@ signal_data = pd.DataFrame({
         101000,
         102500,
         104000,
-        106000,
-        107500
+        103000,
+        101000
     ],
 
     "close": [
         100000,
         102000,
-        103000,
+        104000,
         105000,
-        108000,
-        107000
+        101000,
+        102000
     ],
 
     "signal": [
@@ -51,8 +58,48 @@ signal_data = pd.DataFrame({
         "BUY",
         "HOLD",
         "HOLD",
-        "SELL",
+        "HOLD",
         "HOLD"
+    ],
+
+    # ATR14 dùng để tính quy mô vị thế
+    "atr14": [
+        2500,
+        2500,
+        2500,
+        2500,
+        2500,
+        2500
+    ],
+
+    # Giá trị giao dịch trung bình 20 phiên
+    "avg_gtgd20": [
+        5_000_000_000,
+        5_000_000_000,
+        5_000_000_000,
+        5_000_000_000,
+        5_000_000_000,
+        5_000_000_000
+    ],
+
+    # Regime = 2: thị trường thuận lợi
+    "regime": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+    ],
+
+    # Chandelier Stop do Module tính toán truyền sang
+    "chandelier_cs": [
+        95000,
+        96000,
+        98000,
+        102000,
+        102000,
+        102000
     ]
 })
 
@@ -63,7 +110,8 @@ signal_data = pd.DataFrame({
 
 result = run_backtest(
     signal_data=signal_data,
-    benchmark_input=None
+    benchmark_input=None,
+    initial_capital=200_000_000
 )
 
 
@@ -87,3 +135,31 @@ print(
     f"Số giao dịch hoàn thành: "
     f"{len(result['trades'])}"
 )
+
+
+# =========================================================
+# KIỂM TRA CHANDELIER STOP
+# =========================================================
+
+if len(result["trades"]) == 1:
+
+    trade = result["trades"].iloc[0]
+
+    print("\nTEST CHANDELIER STOP: THÀNH CÔNG")
+
+    print(
+        f"Mua ngày: "
+        f"{trade['buy_date'].date()}"
+    )
+
+    print(
+        f"Bán ngày: "
+        f"{trade['sell_date'].date()}"
+    )
+
+else:
+
+    print(
+        "\nTEST CHANDELIER STOP: "
+        "CHƯA ĐÚNG KỲ VỌNG"
+    )
