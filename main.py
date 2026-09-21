@@ -1,5 +1,6 @@
 from src.module_bot.telegram_bot import main
+from keep_alive import keep_alive
 
-if __name__ == '__main__':
-    print("Đang khởi động hệ thống Fintech Bot...")
-    main()
+if __name__ == "__main__":
+    keep_alive() # Khởi động máy chủ web giả để báo cáo với Render
+    main()       # Khởi động Bot Telegram
