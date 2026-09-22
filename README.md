@@ -2,6 +2,13 @@
 
 Dự án này là một hệ thống Fintech Bot tự động hóa hoàn toàn từ khâu thu thập dữ liệu thị trường (FireAnt), tính toán chỉ báo kỹ thuật (SMA, RS, ATR, Chandelier Stop), kiểm định chiến lược (Backtest) cho đến việc tự động bắn tín hiệu Mua/Bán qua ứng dụng Telegram.
 
+## 👥 Danh sách thành viên (Nhóm 4)
+- Thành viên 1 - MSSV
+- Thành viên 2 - MSSV
+*(Bạn tự điền tên và MSSV của nhóm vào đây nhé)*
+
+---
+
 ## 🛠 Yêu cầu hệ thống (Prerequisites)
 Để chạy được dự án này, máy tính của bạn cần cài đặt sẵn:
 - **Python:** Phiên bản 3.9 trở lên.
