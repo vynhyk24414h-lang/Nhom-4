@@ -24,17 +24,16 @@ Trong thư mục gốc của dự án, bạn cần tạo một file có tên là
 
 ```ini
 # Cấu hình Telegram Bot
-TELEGRAM_TOKEN=tạo_con_bot_telegram_khác_rồi_lấy_token_đưa_vào_đây
-TELEGRAM_CHAT_ID=123456789                           # Lấy từ @userinfobot trên Telegram
+TELEGRAM_TOKEN=token_bot_cua_anh
+TELEGRAM_CHAT_ID=chat_id_cua_anh
 
 # Cấu hình FireAnt API (Bắt buộc để lấy dữ liệu)
-FIREANT_COOKIE=dán_toàn_bộ_cookie_fireant_của_bạn_vào_đây
+FIREANT_COOKIE=cookie_fireant_cua_anh
 ```
 
-**📌 Hướng dẫn lấy Token và Cookie:**
-1. **Telegram Token:** Thì a tạo con bot telegram khác, Rồi a lấy token a đưa vào thôi.
-2. **Telegram Chat ID:** Lên Telegram tìm `@userinfobot`, bấm `/start` để lấy dãy số ID.
-3. **FireAnt Cookie:** Đăng nhập vào web [fireant.vn](https://fireant.vn), bấm `F12` -> tab `Network` (Mạng) -> F5 lại trang -> Bấm vào một luồng dữ liệu API bất kỳ -> Tìm mục `Request Headers` -> Copy toàn bộ dãy chữ sau chữ `Cookie:`.
+**📌 Lưu ý về Token và Cookie:**
+- **Telegram Token:** Thì anh tạo con bot Telegram khác, rồi anh lấy token anh đưa vào thôi.
+- **FireAnt Cookie:** Còn cookie FireAnt thì anh tự đi lấy nhé.
 
 ---
 
