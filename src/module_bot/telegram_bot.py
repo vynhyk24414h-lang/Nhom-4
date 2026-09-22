@@ -1,27 +1,23 @@
 import os
 import asyncio
-
 import pandas as pd
+
 from dotenv import load_dotenv
 
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    ContextTypes,
-)
-
-from src.module_thu_thap_du_lieu.market_data import (
-    get_market_data,
-    get_stock_data
-)
-
-from src.module_tinh_toan_xu_ly.processor import (
-    process_universe
+    ContextTypes
 )
 
 from src.module_bot.chart import (
     create_candlestick_chart
+)
+
+from src.module_bot.analysis_cache import (
+    get_latest_analysis,
+    get_stock_analysis
 )
 
 
@@ -53,7 +49,7 @@ def format_price(value):
     if value is None or pd.isna(value):
         return "N/A"
 
-    return f"{value:,.0f} đ"
+    return f"{float(value):,.0f} đ"
 
 
 def format_money(value):
@@ -64,23 +60,16 @@ def format_money(value):
     value = float(value)
 
     if value >= 1_000_000_000:
-
-        return (
-            f"{value / 1_000_000_000:.2f} tỷ"
-        )
+        return f"{value / 1_000_000_000:.2f} tỷ"
 
     if value >= 1_000_000:
-
-        return (
-            f"{value / 1_000_000:.2f} triệu"
-        )
+        return f"{value / 1_000_000:.2f} triệu"
 
     return f"{value:,.0f} đ"
 
 
 # =========================================================
 # KẾ HOẠCH GIAO DỊCH
-# CHỈ DÙNG KHI TÍN HIỆU = MUA
 # =========================================================
 
 def calculate_trade_plan(row):
@@ -93,17 +82,13 @@ def calculate_trade_plan(row):
         or pd.isna(atr)
         or atr <= 0
     ):
-
         return {
             "entry": entry,
             "stop": None,
-            "target": None,
+            "target": None
         }
 
-    stop = (
-        entry
-        - SL_ATR_MULTIPLIER * atr
-    )
+    stop = entry - SL_ATR_MULTIPLIER * atr
 
     target = (
         entry
@@ -113,7 +98,7 @@ def calculate_trade_plan(row):
     return {
         "entry": entry,
         "stop": stop,
-        "target": target,
+        "target": target
     }
 
 
@@ -126,29 +111,22 @@ async def start(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    message = """
-👋 CHÀO MỪNG ĐẾN VỚI STOCK ANALYTICS BOT
+    message = (
+        "👋 CHÀO MỪNG ĐẾN VỚI STOCK ANALYTICS BOT\n\n"
 
-📊 Bot hỗ trợ:
-• Phân tích tín hiệu MUA / BÁN / GIỮ
-• Tra cứu cổ phiếu
-• Theo dõi tín hiệu thị trường
-• Xem biểu đồ nến
+        "📊 Bot hỗ trợ:\n"
+        "• Phân tích tín hiệu MUA / BÁN / GIỮ\n"
+        "• Tra cứu cổ phiếu\n"
+        "• Theo dõi tín hiệu thị trường\n"
+        "• Xem biểu đồ nến\n\n"
 
-📚 Gõ /help để xem toàn bộ lệnh.
+        "📚 Gõ /help để xem toàn bộ lệnh.\n\n"
 
-⚠️ LƯU Ý RỦI RO
-
-Các tín hiệu được tạo dựa trên dữ liệu
-và mô hình phân tích của hệ thống.
-
-Thông tin chỉ mang tính tham khảo,
-không phải lời khuyên đầu tư.
-"""
-
-    await update.message.reply_text(
-        message
+        "⚠️ Tín hiệu chỉ mang tính tham khảo, "
+        "không phải lời khuyên đầu tư."
     )
+
+    await update.message.reply_text(message)
 
 
 # =========================================================
@@ -160,37 +138,237 @@ async def help_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    message = """
-📚 DANH SÁCH LỆNH CƠ BẢN
+    message = (
+        "📚 DANH SÁCH LỆNH\n\n"
 
-/start
-Giới thiệu và lưu ý rủi ro.
+        "/start\n"
+        "Giới thiệu bot.\n\n"
 
-/help
-Xem danh sách lệnh.
+        "/help\n"
+        "Xem danh sách lệnh.\n\n"
 
-/tinhieu
-Xem danh sách tín hiệu MUA/BÁN hôm nay.
+        "/tinhieu\n"
+        "Xem tín hiệu MUA / BÁN / GIỮ.\n\n"
 
-/tracuu [Mã CK]
-Phân tích chi tiết 1 mã cổ phiếu.
+        "/tracuu [Mã CK]\n"
+        "Ví dụ: /tracuu FPT\n\n"
 
-Ví dụ:
-/tracuu FPT
+        "/bieudo [Mã CK]\n"
+        "Ví dụ: /bieudo FPT\n\n"
 
-/bieudo [Mã CK]
-Xem biểu đồ nến và các đường EMA/SMA.
-
-Ví dụ:
-/bieudo FPT
-
-⚠️ Tín hiệu chỉ mang tính tham khảo,
-không phải khuyến nghị đầu tư.
-"""
-
-    await update.message.reply_text(
-        message
+        "⚠️ Tín hiệu chỉ mang tính tham khảo."
     )
+
+    await update.message.reply_text(message)
+
+
+# =========================================================
+# BUILD ANALYSIS MESSAGE
+# =========================================================
+
+def build_analysis_message(row):
+
+    symbol = str(row["Symbol"]).upper()
+    signal = row["Signal"]
+
+    close = row["Close"]
+    rs = row["RS"]
+    ema20 = row["EMA20"]
+    ema50 = row["EMA50"]
+    sma200 = row["SMA200"]
+    atr14 = row["ATR14"]
+    adx14 = row["ADX14"]
+    gtgd = row["MedianGTGD20"]
+
+    # -----------------------------------------------------
+    # ICON
+    # -----------------------------------------------------
+
+    icon = {
+        "MUA": "🟢",
+        "BÁN": "🔴",
+        "GIỮ": "🟡"
+    }.get(signal, "⚪")
+
+    # -----------------------------------------------------
+    # XU HƯỚNG
+    # -----------------------------------------------------
+
+    if (
+        pd.notna(close)
+        and pd.notna(sma200)
+        and pd.notna(ema20)
+        and pd.notna(ema50)
+        and close > sma200
+        and ema20 > ema50
+    ):
+        trend = "📈 Xu hướng tăng"
+
+    elif (
+        pd.notna(close)
+        and pd.notna(sma200)
+        and close < sma200
+    ):
+        trend = "📉 Xu hướng giảm"
+
+    else:
+        trend = "↔️ Xu hướng chưa rõ"
+
+    # -----------------------------------------------------
+    # HEADER
+    # -----------------------------------------------------
+
+    message = (
+        f"📊 PHÂN TÍCH {symbol}\n"
+        f"📅 Ngày: "
+        f"{pd.to_datetime(row['Date']).strftime('%d/%m/%Y')}\n\n"
+
+        f"{icon} TÍN HIỆU: {signal}\n"
+        f"💰 Giá: {format_price(close)}\n"
+        f"{trend}\n\n"
+
+        "📐 CHỈ BÁO KỸ THUẬT\n"
+        f"• EMA20: {format_price(ema20)}\n"
+        f"• EMA50: {format_price(ema50)}\n"
+        f"• SMA200: {format_price(sma200)}\n"
+        f"• ATR14: {format_price(atr14)}\n"
+        f"• ADX14: {adx14:.2f}\n"
+        f"• RS: {rs:.1f}\n\n"
+
+        "💧 THANH KHOẢN\n"
+        f"• Median GTGD20: {format_money(gtgd)}\n"
+    )
+
+    if bool(row.get("Liquidity_ok", False)):
+        message += "• Trạng thái: ✅ Đạt yêu cầu\n"
+    else:
+        message += "• Trạng thái: ❌ Chưa đạt\n"
+
+    # -----------------------------------------------------
+    # XÁC NHẬN
+    # -----------------------------------------------------
+
+    message += "\n📊 XÁC NHẬN TÍN HIỆU\n"
+
+    checks = [
+        ("EMA20 > EMA50", "EMA_ok"),
+        ("Giá > SMA200", "SMA200_ok"),
+        ("Donchian breakout", "Donchian_ok"),
+        ("Volume breakout", "VolumeBreakout_ok"),
+        ("CLV ≥ 0.6", "CLV_ok"),
+        ("Anti-chasing", "AntiChasing_ok")
+    ]
+
+    for name, column in checks:
+
+        if bool(row.get(column, False)):
+            message += f"• {name}: ✅\n"
+        else:
+            message += f"• {name}: ❌\n"
+
+    if pd.notna(row.get("TrendScore")):
+        message += (
+            f"\n📈 Trend Score: "
+            f"{int(row['TrendScore'])}/3\n"
+        )
+
+    if pd.notna(row.get("VolumeScore")):
+        message += (
+            f"📊 Volume Score: "
+            f"{int(row['VolumeScore'])}/2\n"
+        )
+
+    # -----------------------------------------------------
+    # KẾ HOẠCH
+    # -----------------------------------------------------
+
+    if signal == "MUA":
+
+        plan = calculate_trade_plan(row)
+
+        message += (
+            "\n🎯 KẾ HOẠCH GIAO DỊCH\n"
+            f"• Điểm vào: {format_price(plan['entry'])}\n"
+            f"• Stop Loss: {format_price(plan['stop'])}\n"
+            f"• Mục tiêu: {format_price(plan['target'])}\n"
+        )
+
+    elif signal == "BÁN":
+
+        message += (
+            "\n🔴 KẾ HOẠCH XỬ LÝ\n"
+            f"• Giá hiện tại: {format_price(close)}\n"
+            "• Ưu tiên thoát vị thế.\n"
+            "• Không mở vị thế mua mới theo tín hiệu hiện tại.\n"
+        )
+
+    else:
+
+        message += (
+            "\n🟡 TRẠNG THÁI\n"
+            f"• Giá hiện tại: {format_price(close)}\n"
+            "• Chưa đủ điều kiện mở vị thế mới.\n"
+        )
+
+    # -----------------------------------------------------
+    # NHẬN ĐỊNH
+    # -----------------------------------------------------
+
+    if signal == "MUA":
+
+        message += (
+            "\n📝 NHẬN ĐỊNH\n"
+            "Các điều kiện thanh khoản, relative strength "
+            "và xu hướng đang hỗ trợ tín hiệu MUA."
+        )
+
+    elif signal == "BÁN":
+
+        reasons = []
+
+        if (
+            pd.notna(sma200)
+            and close < sma200
+        ):
+            reasons.append(
+                "giá đóng cửa dưới SMA200"
+            )
+
+        if (
+            pd.notna(rs)
+            and rs < 50
+        ):
+            reasons.append(
+                "RS dưới 50"
+            )
+
+        if reasons:
+            message += (
+                "\n📝 NHẬN ĐỊNH\n"
+                "Tín hiệu BÁN do "
+                + " và ".join(reasons)
+                + "."
+            )
+        else:
+            message += (
+                "\n📝 NHẬN ĐỊNH\n"
+                "Xuất hiện điều kiện BÁN theo hệ thống."
+            )
+
+    else:
+
+        message += (
+            "\n📝 NHẬN ĐỊNH\n"
+            "Chưa đủ điều kiện để phát sinh "
+            "tín hiệu MUA hoặc BÁN."
+        )
+
+    message += (
+        "\n\n⚠️ Đây là kết quả phân tích tự động, "
+        "không phải khuyến nghị đầu tư."
+    )
+
+    return message
 
 
 # =========================================================
@@ -202,59 +380,34 @@ async def tinhieu(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    await update.message.reply_text(
-        "🔎 Đang cập nhật và phân tích tín hiệu hôm nay..."
+    status = await update.message.reply_text(
+        "🔎 Đang kiểm tra tín hiệu..."
     )
 
     try:
 
-        # -------------------------------------------------
-        # Lấy dữ liệu toàn bộ thị trường
-        # Dùng cho tính RS và tín hiệu toàn universe
-        # -------------------------------------------------
-
-        df = await asyncio.to_thread(
-            get_market_data
-        )
-
-        if df is None or df.empty:
-
-            await update.message.reply_text(
-                "❌ Không có dữ liệu thị trường."
-            )
-
-            return
-
-        # -------------------------------------------------
-        # Xử lý dữ liệu
-        # -------------------------------------------------
+        # analysis_cache sẽ tự quyết định:
+        # - đọc cache nếu đã có
+        # - process_universe nếu cần tính mới
 
         result = await asyncio.to_thread(
-            process_universe,
-            df
+            get_latest_analysis
         )
 
-        if result.empty:
+        if result is None or result.empty:
 
-            await update.message.reply_text(
-                "❌ Không thể phân tích dữ liệu."
+            await status.edit_text(
+                "❌ Không có dữ liệu phân tích."
             )
 
             return
-
-        latest_date = result["Date"].max()
-
-        latest = result[
-            (result["Date"] == latest_date)
-            & (result["DataSufficient"])
-        ].copy()
 
         # -------------------------------------------------
         # MUA
         # -------------------------------------------------
 
-        buy_list = latest[
-            latest["Signal"] == "MUA"
+        buy_list = result[
+            result["Signal"] == "MUA"
         ].sort_values(
             "RS",
             ascending=False
@@ -264,34 +417,30 @@ async def tinhieu(
         # BÁN
         # -------------------------------------------------
 
-        sell_list = latest[
-            latest["Signal"] == "BÁN"
+        sell_list = result[
+            result["Signal"] == "BÁN"
         ].sort_values(
             "RS",
             ascending=False
         )
 
-        # -------------------------------------------------
-        # HEADER
-        # -------------------------------------------------
+        latest_date = result["Date"].max()
 
         message = (
             "📊 TÍN HIỆU THỊ TRƯỜNG\n"
             f"📅 Ngày: "
-            f"{latest_date.strftime('%d/%m/%Y')}\n\n"
+            f"{pd.to_datetime(latest_date).strftime('%d/%m/%Y')}\n\n"
         )
 
         # -------------------------------------------------
-        # DANH SÁCH MUA
+        # MUA
         # -------------------------------------------------
 
         message += "🟢 TÍN HIỆU MUA\n"
 
         if buy_list.empty:
 
-            message += (
-                "Không có tín hiệu MUA.\n"
-            )
+            message += "Không có tín hiệu MUA.\n"
 
         else:
 
@@ -304,16 +453,14 @@ async def tinhieu(
                 )
 
         # -------------------------------------------------
-        # DANH SÁCH BÁN
+        # BÁN
         # -------------------------------------------------
 
         message += "\n🔴 TÍN HIỆU BÁN\n"
 
         if sell_list.empty:
 
-            message += (
-                "Không có tín hiệu BÁN.\n"
-            )
+            message += "Không có tín hiệu BÁN.\n"
 
         else:
 
@@ -325,463 +472,29 @@ async def tinhieu(
                     f"| RS: {row['RS']:.1f}\n"
                 )
 
-        # -------------------------------------------------
-        # FOOTER
-        # -------------------------------------------------
-
         message += (
-            "\n💡 Dùng /tracuu [Mã CK] "
+            "\n💡 /tracuu [Mã CK] "
             "để xem phân tích chi tiết."
         )
 
         message += (
-            "\n💡 Dùng /bieudo [Mã CK] "
-            "để xem biểu đồ nến."
+            "\n💡 /bieudo [Mã CK] "
+            "để xem biểu đồ."
         )
 
         message += (
             "\n\n⚠️ Tín hiệu chỉ mang tính tham khảo."
         )
 
-        await update.message.reply_text(
-            message
-        )
+        await status.edit_text(message)
 
     except Exception as e:
 
-        print(
-            f"Lỗi /tinhieu: {e}"
-        )
+        print(f"Lỗi /tinhieu: {e}")
 
-        await update.message.reply_text(
+        await status.edit_text(
             f"❌ Không thể lấy tín hiệu:\n{e}"
         )
-
-
-# =========================================================
-# LẤY DỮ LIỆU MỘT MÃ
-# =========================================================
-
-def get_latest_stock(symbol):
-
-    symbol = symbol.strip().upper()
-
-    # -----------------------------------------------------
-    # Lấy riêng dữ liệu của mã
-    # Không gọi get_market_data() nữa
-    # -----------------------------------------------------
-
-    df = get_stock_data(
-        symbol
-    )
-
-    if df is None or df.empty:
-        return None
-
-    # -----------------------------------------------------
-    # Xử lý dữ liệu
-    # -----------------------------------------------------
-
-    result = process_universe(
-        df
-    )
-
-    if result.empty:
-        return None
-
-    result = result.sort_values(
-        "Date"
-    )
-
-    return result.iloc[-1]
-
-
-# =========================================================
-# TẠO NỘI DUNG PHÂN TÍCH
-# =========================================================
-
-def build_analysis_message(row):
-
-    symbol = str(
-        row["Symbol"]
-    ).upper()
-
-    signal = row["Signal"]
-
-    close = row["Close"]
-
-    rs = row["RS"]
-
-    ema20 = row["EMA20"]
-
-    ema50 = row["EMA50"]
-
-    sma200 = row["SMA200"]
-
-    atr14 = row["ATR14"]
-
-    adx14 = row["ADX14"]
-
-    gtgd = row["MedianGTGD20"]
-
-    trend_score = row.get(
-        "TrendScore",
-        None
-    )
-
-    volume_score = row.get(
-        "VolumeScore",
-        None
-    )
-
-    # =====================================================
-    # ICON
-    # =====================================================
-
-    if signal == "MUA":
-
-        signal_icon = "🟢"
-
-    elif signal == "BÁN":
-
-        signal_icon = "🔴"
-
-    elif signal == "GIỮ":
-
-        signal_icon = "🟡"
-
-    else:
-
-        signal_icon = "⚪"
-
-    # =====================================================
-    # XU HƯỚNG
-    # =====================================================
-
-    if (
-        pd.notna(close)
-        and pd.notna(sma200)
-        and close > sma200
-        and pd.notna(ema20)
-        and pd.notna(ema50)
-        and ema20 > ema50
-    ):
-
-        trend = "📈 Xu hướng tăng"
-
-    elif (
-        pd.notna(close)
-        and pd.notna(sma200)
-        and close < sma200
-    ):
-
-        trend = "📉 Xu hướng giảm"
-
-    else:
-
-        trend = "↔️ Xu hướng chưa rõ"
-
-    # =====================================================
-    # HEADER
-    # =====================================================
-
-    message = (
-        f"📊 PHÂN TÍCH {symbol}\n"
-        f"📅 Ngày: "
-        f"{pd.to_datetime(row['Date']).strftime('%d/%m/%Y')}\n\n"
-
-        f"{signal_icon} TÍN HIỆU: {signal}\n"
-        f"💰 Giá hiện tại: {format_price(close)}\n"
-        f"{trend}\n\n"
-
-        "📐 CHỈ BÁO KỸ THUẬT\n"
-        f"• EMA20: {format_price(ema20)}\n"
-        f"• EMA50: {format_price(ema50)}\n"
-        f"• SMA200: {format_price(sma200)}\n"
-        f"• ATR14: {format_price(atr14)}\n"
-        f"• ADX14: {adx14:.2f}\n"
-    )
-
-    if pd.notna(rs):
-
-        message += (
-            f"• RS: {rs:.1f}\n"
-        )
-
-    # =====================================================
-    # THANH KHOẢN
-    # =====================================================
-
-    message += "\n💧 THANH KHOẢN\n"
-
-    message += (
-        f"• Median GTGD20: "
-        f"{format_money(gtgd)}\n"
-    )
-
-    if bool(
-        row.get(
-            "Liquidity_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Trạng thái: ✅ Đạt yêu cầu\n"
-        )
-
-    else:
-
-        message += (
-            "• Trạng thái: ❌ Chưa đạt\n"
-        )
-
-    # =====================================================
-    # XÁC NHẬN TÍN HIỆU
-    # =====================================================
-
-    message += (
-        "\n📊 XÁC NHẬN TÍN HIỆU\n"
-    )
-
-    if bool(
-        row.get(
-            "EMA_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• EMA20 > EMA50: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• EMA20 > EMA50: ❌\n"
-        )
-
-    if bool(
-        row.get(
-            "SMA200_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Giá > SMA200: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Giá > SMA200: ❌\n"
-        )
-
-    if bool(
-        row.get(
-            "Donchian_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Donchian breakout: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Donchian breakout: ❌\n"
-        )
-
-    if bool(
-        row.get(
-            "VolumeBreakout_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Volume breakout: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Volume breakout: ❌\n"
-        )
-
-    if bool(
-        row.get(
-            "CLV_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• CLV ≥ 0.6: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• CLV ≥ 0.6: ❌\n"
-        )
-
-    if bool(
-        row.get(
-            "AntiChasing_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Anti-chasing: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Anti-chasing: ❌\n"
-        )
-
-    if pd.notna(trend_score):
-
-        message += (
-            f"\n📈 Trend Score: "
-            f"{int(trend_score)}/3\n"
-        )
-
-    if pd.notna(volume_score):
-
-        message += (
-            f"📊 Volume Score: "
-            f"{int(volume_score)}/2\n"
-        )
-
-    # =====================================================
-    # KẾ HOẠCH THEO TÍN HIỆU
-    # =====================================================
-
-    if signal == "MUA":
-
-        plan = calculate_trade_plan(
-            row
-        )
-
-        message += (
-            "\n🎯 KẾ HOẠCH GIAO DỊCH\n"
-        )
-
-        message += (
-            f"• Điểm vào: "
-            f"{format_price(plan['entry'])}\n"
-            f"• Stop Loss: "
-            f"{format_price(plan['stop'])}\n"
-            f"• Mục tiêu: "
-            f"{format_price(plan['target'])}\n"
-        )
-
-    elif signal == "BÁN":
-
-        message += (
-            "\n🔴 KẾ HOẠCH XỬ LÝ\n"
-        )
-
-        message += (
-            f"• Giá hiện tại: "
-            f"{format_price(close)}\n"
-            "• Trạng thái: Ưu tiên thoát vị thế\n"
-            "• Không mở vị thế mua mới theo tín hiệu hiện tại.\n"
-        )
-
-    elif signal == "GIỮ":
-
-        message += (
-            "\n🟡 TRẠNG THÁI\n"
-        )
-
-        message += (
-            f"• Giá hiện tại: "
-            f"{format_price(close)}\n"
-            "• Chưa đủ điều kiện để mở vị thế mới.\n"
-        )
-
-    # =====================================================
-    # NHẬN ĐỊNH
-    # =====================================================
-
-    message += "\n📝 NHẬN ĐỊNH\n"
-
-    if signal == "MUA":
-
-        message += (
-            "Các điều kiện thanh khoản, "
-            "relative strength và xu hướng "
-            "đang hỗ trợ tín hiệu MUA."
-        )
-
-    elif signal == "BÁN":
-
-        reasons = []
-
-        if (
-            pd.notna(sma200)
-            and close < sma200
-        ):
-
-            reasons.append(
-                "giá đóng cửa dưới SMA200"
-            )
-
-        if (
-            pd.notna(rs)
-            and rs < 50
-        ):
-
-            reasons.append(
-                "RS dưới 50"
-            )
-
-        if reasons:
-
-            message += (
-                "Tín hiệu BÁN do "
-                + " và ".join(reasons)
-                + "."
-            )
-
-        else:
-
-            message += (
-                "Xuất hiện điều kiện BÁN "
-                "theo hệ thống."
-            )
-
-    elif signal == "GIỮ":
-
-        message += (
-            "Chưa đủ điều kiện để phát sinh "
-            "tín hiệu MUA hoặc BÁN."
-        )
-
-    else:
-
-        message += (
-            "Dữ liệu chưa đủ để đưa ra tín hiệu."
-        )
-
-    # =====================================================
-    # CẢNH BÁO
-    # =====================================================
-
-    message += (
-        "\n\n⚠️ Đây là kết quả phân tích tự động, "
-        "không phải khuyến nghị đầu tư."
-    )
-
-    return message
 
 
 # =========================================================
@@ -797,34 +510,29 @@ async def tracuu(
 
         await update.message.reply_text(
             "❗ Vui lòng nhập mã cổ phiếu.\n\n"
-            "Ví dụ:\n"
-            "/tracuu FPT"
+            "Ví dụ: /tracuu FPT"
         )
 
         return
 
-    symbol = context.args[0].upper()
+    symbol = context.args[0].strip().upper()
 
-    await update.message.reply_text(
-        f"🔎 Đang phân tích {symbol}..."
+    status = await update.message.reply_text(
+        f"🔎 Đang tra cứu {symbol}..."
     )
 
     try:
 
-        # -------------------------------------------------
-        # Lấy riêng dữ liệu mã cổ phiếu
-        # và chạy ở thread riêng
-        # -------------------------------------------------
-
+        # Đọc kết quả đã tính từ analysis cache
         row = await asyncio.to_thread(
-            get_latest_stock,
+            get_stock_analysis,
             symbol
         )
 
         if row is None:
 
-            await update.message.reply_text(
-                f"❌ Không tìm thấy dữ liệu "
+            await status.edit_text(
+                f"❌ Không tìm thấy dữ liệu phân tích "
                 f"cho {symbol}."
             )
 
@@ -837,20 +545,16 @@ async def tracuu(
             )
         ):
 
-            await update.message.reply_text(
+            await status.edit_text(
                 f"⚠️ {symbol} chưa có đủ dữ liệu "
                 "để phân tích."
             )
 
             return
 
-        message = build_analysis_message(
-            row
-        )
+        message = build_analysis_message(row)
 
-        await update.message.reply_text(
-            message
-        )
+        await status.edit_text(message)
 
     except Exception as e:
 
@@ -858,9 +562,8 @@ async def tracuu(
             f"Lỗi /tracuu {symbol}: {e}"
         )
 
-        await update.message.reply_text(
-            f"❌ Có lỗi khi phân tích "
-            f"{symbol}:\n{e}"
+        await status.edit_text(
+            f"❌ Có lỗi khi phân tích {symbol}:\n{e}"
         )
 
 
@@ -877,24 +580,18 @@ async def bieudo(
 
         await update.message.reply_text(
             "❗ Vui lòng nhập mã cổ phiếu.\n\n"
-            "Ví dụ:\n"
-            "/bieudo FPT"
+            "Ví dụ: /bieudo FPT"
         )
 
         return
 
-    symbol = context.args[0].upper()
+    symbol = context.args[0].strip().upper()
 
-    await update.message.reply_text(
+    status = await update.message.reply_text(
         f"🕯️ Đang tạo biểu đồ {symbol}..."
     )
 
     try:
-
-        # -------------------------------------------------
-        # Chạy việc lấy dữ liệu + vẽ chart
-        # ở thread riêng để bot không bị đứng
-        # -------------------------------------------------
 
         image = await asyncio.to_thread(
             create_candlestick_chart,
@@ -914,15 +611,16 @@ async def bieudo(
             )
         )
 
+        await status.delete()
+
     except Exception as e:
 
         print(
             f"Lỗi /bieudo {symbol}: {e}"
         )
 
-        await update.message.reply_text(
-            f"❌ Không thể tạo biểu đồ "
-            f"{symbol}.\n\n"
+        await status.edit_text(
+            f"❌ Không thể tạo biểu đồ {symbol}.\n"
             f"Lỗi: {e}"
         )
 
@@ -936,8 +634,7 @@ def run_bot():
     if not TELEGRAM_BOT_TOKEN:
 
         raise ValueError(
-            "Chưa cấu hình TELEGRAM_BOT_TOKEN "
-            "trong biến môi trường."
+            "Chưa cấu hình TELEGRAM_BOT_TOKEN."
         )
 
     application = (
@@ -950,52 +647,27 @@ def run_bot():
         .build()
     )
 
-    # =====================================================
-    # COMMANDS
-    # =====================================================
-
     application.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
+        CommandHandler("start", start)
     )
 
     application.add_handler(
-        CommandHandler(
-            "help",
-            help_command
-        )
+        CommandHandler("help", help_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "tinhieu",
-            tinhieu
-        )
+        CommandHandler("tinhieu", tinhieu)
     )
 
     application.add_handler(
-        CommandHandler(
-            "tracuu",
-            tracuu
-        )
+        CommandHandler("tracuu", tracuu)
     )
 
     application.add_handler(
-        CommandHandler(
-            "bieudo",
-            bieudo
-        )
+        CommandHandler("bieudo", bieudo)
     )
 
-    # =====================================================
-    # START BOT
-    # =====================================================
-
-    print(
-        "🤖 Telegram Bot đang chạy..."
-    )
+    print("🤖 Telegram Bot đang chạy...")
 
     application.run_polling(
         drop_pending_updates=True

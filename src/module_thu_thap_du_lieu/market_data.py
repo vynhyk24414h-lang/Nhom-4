@@ -11,7 +11,14 @@ from src.module_thu_thap_du_lieu.universe import (
 )
 
 
+# =========================================================
+# CACHE
+# =========================================================
+
 CACHE_FILE = "fireant_universe.csv"
+
+STOCK_CACHE_DIR = "stock_cache"
+
 
 # Lấy dữ liệu khoảng 3 năm
 START_DATE = "2023-01-01"
@@ -216,7 +223,7 @@ def get_market_data():
 
 # =========================================================
 # LẤY DỮ LIỆU RIÊNG MỘT MÃ
-# DÙNG CHO /TRACUU VÀ /BIEUDO
+# DÙNG CHO /BIEUDO
 # =========================================================
 
 def get_stock_data(symbol):
@@ -226,17 +233,30 @@ def get_stock_data(symbol):
     ).strip().upper()
 
     if not symbol:
-
         return pd.DataFrame()
 
     # ==========================================
-    # 1. NẾU CHƯA CÓ CACHE
+    # TẠO THƯ MỤC CACHE RIÊNG CHO TỪNG MÃ
     # ==========================================
 
-    if not os.path.exists(CACHE_FILE):
+    os.makedirs(
+        STOCK_CACHE_DIR,
+        exist_ok=True
+    )
+
+    stock_cache_file = os.path.join(
+        STOCK_CACHE_DIR,
+        f"{symbol}.csv"
+    )
+
+    # ==========================================
+    # 1. CHƯA CÓ CACHE RIÊNG
+    # ==========================================
+
+    if not os.path.exists(stock_cache_file):
 
         print(
-            "Chưa có cache."
+            f"Chưa có cache riêng cho {symbol}."
         )
 
         print(
@@ -253,178 +273,138 @@ def get_stock_data(symbol):
 
         if df is None or df.empty:
 
+            print(
+                f"Không có dữ liệu cho {symbol}."
+            )
+
             return pd.DataFrame()
 
         df = normalize_date(df)
 
-        # Lưu thêm dữ liệu của mã này vào cache
-        if not os.path.exists(CACHE_FILE):
+        df.to_csv(
+            stock_cache_file,
+            index=False
+        )
 
-            df.to_csv(
-                CACHE_FILE,
-                index=False
-            )
+        print(
+            f"Đã lưu cache {symbol}: "
+            f"{len(df):,} dòng."
+        )
 
-        return df
+        return df.sort_values(
+            "Date"
+        ).reset_index(
+            drop=True
+        )
 
     # ==========================================
-    # 2. ĐÃ CÓ CACHE
+    # 2. ĐÃ CÓ CACHE RIÊNG
     # ==========================================
 
     print(
-        f"Đang lấy dữ liệu {symbol} "
-        "từ cache..."
+        f"Đang đọc cache riêng của {symbol}..."
     )
 
     df = pd.read_csv(
-        CACHE_FILE
+        stock_cache_file
     )
 
     if df.empty:
-
         return pd.DataFrame()
 
     df = normalize_date(df)
 
     # ==========================================
-    # 3. LỌC MÃ CỔ PHIẾU
+    # 3. TÌM NGÀY CUỐI CÙNG
     # ==========================================
 
-    stock_df = df[
-        df["Symbol"]
-        .astype(str)
-        .str.upper()
-        == symbol
-    ].copy()
+    last_date = df["Date"].max()
 
-    # ==========================================
-    # 4. NẾU CACHE CHƯA CÓ MÃ
-    # ==========================================
-
-    if stock_df.empty:
+    if pd.isna(last_date):
 
         print(
-            f"Chưa có {symbol} trong cache."
+            f"❌ Không xác định được ngày cuối "
+            f"của {symbol}."
+        )
+
+        return df
+
+    # ==========================================
+    # 4. CẬP NHẬT DỮ LIỆU MỚI
+    # ==========================================
+
+    today = pd.Timestamp.today().normalize()
+
+    if last_date < today:
+
+        update_start = (
+            last_date
+            + pd.Timedelta(days=1)
         )
 
         print(
-            f"Đang lấy dữ liệu {symbol} "
-            f"từ FireAnt..."
+            f"Cập nhật {symbol} từ "
+            f"{update_start.strftime('%d/%m/%Y')} "
+            f"đến "
+            f"{today.strftime('%d/%m/%Y')}..."
         )
 
-        stock_df = get_historical_data(
+        new_data = get_historical_data(
             symbol,
-            START_DATE,
-            INITIAL_END_DATE
+            update_start.strftime("%Y-%m-%d"),
+            today.strftime("%Y-%m-%d")
         )
 
-        if stock_df is None or stock_df.empty:
+        if new_data is not None and not new_data.empty:
 
-            return pd.DataFrame()
+            new_data = normalize_date(
+                new_data
+            )
 
-        stock_df = normalize_date(
-            stock_df
-        )
+            df = pd.concat(
+                [df, new_data],
+                ignore_index=True
+            )
 
-        # Thêm vào cache
-        df = pd.concat(
-            [df, stock_df],
-            ignore_index=True
-        )
+            df = df.drop_duplicates(
+                subset=[
+                    "Symbol",
+                    "Date"
+                ]
+            )
 
-        df = df.drop_duplicates(
-            subset=[
-                "Symbol",
-                "Date"
-            ]
-        )
+            df = df.sort_values(
+                [
+                    "Symbol",
+                    "Date"
+                ]
+            ).reset_index(
+                drop=True
+            )
 
-        df = df.sort_values(
-            [
-                "Symbol",
-                "Date"
-            ]
-        ).reset_index(
-            drop=True
-        )
-
-        df.to_csv(
-            CACHE_FILE,
-            index=False
-        )
-
-        return stock_df
-
-    # ==========================================
-    # 5. CẬP NHẬT DỮ LIỆU MỚI CHO MÃ
-    # ==========================================
-
-    last_date = stock_df["Date"].max()
-
-    if pd.notna(last_date):
-
-        today = pd.Timestamp.today().normalize()
-
-        if last_date < today:
-
-            update_start = (
-                last_date
-                + pd.Timedelta(days=1)
+            df.to_csv(
+                stock_cache_file,
+                index=False
             )
 
             print(
-                f"Cập nhật {symbol} từ "
-                f"{update_start.strftime('%d/%m/%Y')} "
-                f"đến "
-                f"{today.strftime('%d/%m/%Y')}..."
+                f"Đã cập nhật {symbol}: "
+                f"{len(new_data):,} dòng mới."
             )
 
-            new_data = get_historical_data(
-                symbol,
-                update_start.strftime("%Y-%m-%d"),
-                today.strftime("%Y-%m-%d")
+        else:
+
+            print(
+                f"Không có dữ liệu mới cho {symbol}."
             )
 
-            if new_data is not None and not new_data.empty:
+    else:
 
-                new_data = normalize_date(
-                    new_data
-                )
+        print(
+            f"Cache {symbol} đã có dữ liệu mới nhất."
+        )
 
-                df = pd.concat(
-                    [df, new_data],
-                    ignore_index=True
-                )
-
-                df = df.drop_duplicates(
-                    subset=[
-                        "Symbol",
-                        "Date"
-                    ]
-                )
-
-                df = df.sort_values(
-                    [
-                        "Symbol",
-                        "Date"
-                    ]
-                ).reset_index(
-                    drop=True
-                )
-
-                df.to_csv(
-                    CACHE_FILE,
-                    index=False
-                )
-
-                stock_df = df[
-                    df["Symbol"]
-                    .astype(str)
-                    .str.upper()
-                    == symbol
-                ].copy()
-
-    return stock_df.sort_values(
+    return df.sort_values(
         "Date"
     ).reset_index(
         drop=True

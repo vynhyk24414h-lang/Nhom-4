@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 
-from src.module_thu_thap_du_lieu.market_data import get_market_data
+from src.module_thu_thap_du_lieu.market_data import get_stock_data
 
 
 # =========================================================
@@ -18,23 +18,10 @@ def create_candlestick_chart(symbol, periods=120):
 
     symbol = symbol.strip().upper()
 
-    # Lấy dữ liệu thị trường
-    df = get_market_data()
+    # Lấy dữ liệu riêng của mã cần vẽ
+    df = get_stock_data(symbol)
 
     if df is None or df.empty:
-        raise ValueError(
-            "Không có dữ liệu thị trường."
-        )
-
-    # Chỉ lấy mã cần vẽ
-    df = df[
-        df["Symbol"]
-        .astype(str)
-        .str.upper()
-        == symbol
-    ].copy()
-
-    if df.empty:
         raise ValueError(
             f"Không tìm thấy dữ liệu cho {symbol}."
         )
