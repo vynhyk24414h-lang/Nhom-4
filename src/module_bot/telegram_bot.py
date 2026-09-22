@@ -1,6 +1,4 @@
 import os
-import datetime
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -33,13 +31,6 @@ TELEGRAM_BOT_TOKEN = os.getenv(
 
 SL_ATR_MULTIPLIER = 3
 TP_RR = 2
-
-
-# =========================================================
-# NGƯỜI ĐĂNG KÝ CẢNH BÁO
-# =========================================================
-
-SUBSCRIBERS = set()
 
 
 # =========================================================
@@ -132,7 +123,6 @@ async def start(
 • Phân tích tín hiệu MUA / BÁN / GIỮ
 • Tra cứu cổ phiếu
 • Theo dõi tín hiệu thị trường
-• Cảnh báo tự động
 
 📚 Gõ /help để xem toàn bộ lệnh.
 
@@ -177,72 +167,12 @@ Phân tích chi tiết 1 mã cổ phiếu.
 Ví dụ:
 /tracuu FPT
 
-/dangky
-Nhận cảnh báo tự động.
-
-/huydangky
-Tắt cảnh báo tự động.
-
 ⚠️ Tín hiệu chỉ mang tính tham khảo,
 không phải khuyến nghị đầu tư.
 """
 
     await update.message.reply_text(
         message
-    )
-
-
-# =========================================================
-# /DANGKY
-# =========================================================
-
-async def dangky(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user_id = update.effective_user.id
-
-    if user_id in SUBSCRIBERS:
-
-        await update.message.reply_text(
-            "🔔 Bạn đã đăng ký nhận cảnh báo tự động."
-        )
-
-        return
-
-    SUBSCRIBERS.add(user_id)
-
-    await update.message.reply_text(
-        "✅ Đăng ký cảnh báo thành công!\n\n"
-        "Bạn sẽ nhận được thông báo khi hệ thống "
-        "phát hiện tín hiệu MUA/BÁN đáng chú ý."
-    )
-
-
-# =========================================================
-# /HUYDANGKY
-# =========================================================
-
-async def huydangky(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user_id = update.effective_user.id
-
-    if user_id not in SUBSCRIBERS:
-
-        await update.message.reply_text(
-            "ℹ️ Bạn chưa đăng ký cảnh báo tự động."
-        )
-
-        return
-
-    SUBSCRIBERS.remove(user_id)
-
-    await update.message.reply_text(
-        "🔕 Đã tắt cảnh báo tự động."
     )
 
 
@@ -852,128 +782,6 @@ async def tracuu(
 
 
 # =========================================================
-# CẢNH BÁO TỰ ĐỘNG
-# =========================================================
-
-async def send_auto_alert(
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not SUBSCRIBERS:
-        return
-
-    try:
-
-        df = get_market_data()
-
-        if df is None or df.empty:
-            return
-
-        result = process_universe(
-            df
-        )
-
-        if result.empty:
-            return
-
-        latest_date = result["Date"].max()
-
-        latest = result[
-            (result["Date"] == latest_date)
-            & (result["DataSufficient"])
-        ]
-
-        buy_list = latest[
-            latest["Signal"] == "MUA"
-        ].sort_values(
-            "RS",
-            ascending=False
-        )
-
-        sell_list = latest[
-            latest["Signal"] == "BÁN"
-        ].sort_values(
-            "RS",
-            ascending=False
-        )
-
-        if (
-            buy_list.empty
-            and sell_list.empty
-        ):
-
-            return
-
-        message = (
-            "🔔 CẢNH BÁO TÍN HIỆU\n"
-            f"📅 "
-            f"{latest_date.strftime('%d/%m/%Y')}\n\n"
-        )
-
-        # -------------------------
-        # MUA
-        # -------------------------
-
-        if not buy_list.empty:
-
-            message += "🟢 MUA\n"
-
-            for _, row in buy_list.head(10).iterrows():
-
-                message += (
-                    f"• {row['Symbol']} "
-                    f"| {format_price(row['Close'])} "
-                    f"| RS {row['RS']:.1f}\n"
-                )
-
-        # -------------------------
-        # BÁN
-        # -------------------------
-
-        if not sell_list.empty:
-
-            message += "\n🔴 BÁN\n"
-
-            for _, row in sell_list.head(10).iterrows():
-
-                message += (
-                    f"• {row['Symbol']} "
-                    f"| {format_price(row['Close'])} "
-                    f"| RS {row['RS']:.1f}\n"
-                )
-
-        message += (
-            "\n\n📌 Dùng /tracuu [Mã CK] "
-            "để xem chi tiết."
-            "\n\n⚠️ Chỉ mang tính tham khảo."
-        )
-
-        for user_id in list(
-            SUBSCRIBERS
-        ):
-
-            try:
-
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=message
-                )
-
-            except Exception as e:
-
-                print(
-                    f"Không gửi được cảnh báo "
-                    f"cho user {user_id}: {e}"
-                )
-
-    except Exception as e:
-
-        print(
-            f"Lỗi cảnh báo tự động: {e}"
-        )
-
-
-# =========================================================
 # CHẠY BOT
 # =========================================================
 
@@ -1027,61 +835,6 @@ def run_bot():
             tracuu
         )
     )
-
-    application.add_handler(
-        CommandHandler(
-            "dangky",
-            dangky
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "huydangky",
-            huydangky
-        )
-    )
-
-    # =====================================================
-    # CẢNH BÁO TỰ ĐỘNG
-    # 15:15 THỨ 2 - THỨ 6
-    # =====================================================
-
-    if application.job_queue is not None:
-
-        application.job_queue.run_daily(
-            send_auto_alert,
-            time=datetime.time(
-                hour=15,
-                minute=15,
-                tzinfo=ZoneInfo(
-                    "Asia/Ho_Chi_Minh"
-                )
-            ),
-            days=(
-                0,
-                1,
-                2,
-                3,
-                4
-            )
-        )
-
-        print(
-            "Đã thiết lập cảnh báo tự động "
-            "15:15 thứ 2 - thứ 6."
-        )
-
-    else:
-
-        print(
-            "⚠️ JobQueue chưa được bật."
-        )
-
-        print(
-            'Cài bằng: '
-            'pip install "python-telegram-bot[job-queue]"'
-        )
 
     # =====================================================
     # START BOT
