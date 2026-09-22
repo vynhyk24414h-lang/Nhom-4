@@ -26,14 +26,10 @@ Trong thư mục gốc của dự án, bạn cần tạo một file có tên là
 # Cấu hình Telegram Bot
 TELEGRAM_TOKEN=token_bot_cua_ban
 TELEGRAM_CHAT_ID=chat_id_cua_ban
-
-# Cấu hình FireAnt API (Bắt buộc để lấy dữ liệu)
-FIREANT_COOKIE=cookie_fireant_cua_ban
 ```
 
-**📌 Lưu ý về Token và Cookie:**
+**📌 Lưu ý về Token:**
 - **Telegram Token:** Để đảm bảo tính bảo mật, mã Token thật không được đính kèm theo mã nguồn. Người dùng vui lòng tự tạo một Bot Telegram mới qua `@BotFather` và sử dụng Token đó để chạy hệ thống.
-- **FireAnt Cookie:** Người dùng vui lòng sử dụng mã Cookie từ tài khoản FireAnt cá nhân để hệ thống có quyền truy cập và tải dữ liệu thị trường.
 
 ---
 
