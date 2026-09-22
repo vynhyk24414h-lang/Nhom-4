@@ -1,14 +1,18 @@
+from flask import Flask
 import os
-from threading import Thread
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot dang chay tren Render!")
+app = Flask(__name__)
 
-def keep_alive():
+
+@app.route("/")
+def home():
+    return "Telegram Bot is running!"
+
+
+def run_web():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
-    Thread(target=server.serve_forever, daemon=True).start()
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )

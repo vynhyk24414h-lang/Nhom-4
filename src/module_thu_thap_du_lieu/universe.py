@@ -25,6 +25,13 @@ def load_symbols():
         .tolist()
     )
 
+    # Loại các mã không phải cổ phiếu thông thường
+    symbols = [
+        symbol
+        for symbol in symbols
+        if not symbol.startswith(("CACB", "CFPT"))
+    ]
+
     return symbols
 
 
