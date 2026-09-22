@@ -12,6 +12,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -24,6 +25,7 @@ from telegram.ext import (
 from src.module_thu_thap_du_lieu.market_data import get_stock_data
 from src.module_tinh_toan_xu_ly.processor import process_universe
 from src.module_bot.chart import create_candlestick_chart
+from src.module_bot.portfolio_optimizer import optimize_portfolio
 
 
 # ============================================================
@@ -105,12 +107,25 @@ def format_money(value):
         return str(value)
 
 
+def format_vnd(value):
+    if pd.isna(value):
+        return "N/A"
+
+    try:
+        value = float(value)
+        return f"{value:,.0f} VNĐ"
+
+    except Exception:
+        return str(value)
+
+
 def format_percent(value):
     if pd.isna(value):
         return "N/A"
 
     try:
         return f"{float(value):.1f}%"
+
     except Exception:
         return str(value)
 
@@ -125,6 +140,12 @@ def main_keyboard():
             InlineKeyboardButton(
                 "🔎 TRA CỨU",
                 callback_data="search"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📊 TỐI ƯU DANH MỤC",
+                callback_data="portfolio"
             )
         ],
         [
@@ -213,11 +234,31 @@ def back_to_stock_keyboard(symbol):
     return InlineKeyboardMarkup(keyboard)
 
 
+def portfolio_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🏠 TRANG CHỦ",
+                callback_data="home"
+            )
+        ]
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 # ============================================================
 # /START
 # ============================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    # Xóa trạng thái nhập danh mục nếu người dùng quay lại start
+    context.user_data["portfolio_step"] = None
+    context.user_data["portfolio_symbols"] = None
 
     message = (
         "📊 FINBOT\n"
@@ -225,12 +266,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Xin chào! 👋\n\n"
         "FINBOT hỗ trợ phân tích cổ phiếu dựa trên "
         "dữ liệu thị trường và bộ tiêu chí của hệ thống.\n\n"
+
         "🔎 Tra cứu một mã cổ phiếu để xem:\n"
         "• Tín hiệu MUA / BÁN / GIỮ\n"
         "• Kế hoạch xử lý\n"
         "• SmartScore\n"
         "• Ngành\n"
         "• Biểu đồ kỹ thuật\n\n"
+
+        "📊 Tối ưu danh mục để phân bổ vốn "
+        "giữa nhiều mã cổ phiếu.\n\n"
+
         "⚠️ Kết quả là phân tích tự động, "
         "không phải khuyến nghị đầu tư."
     )
@@ -245,20 +291,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /HELP
 # ============================================================
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     message = (
         "❓ HƯỚNG DẪN FINBOT\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
+
         "🔎 TRA CỨU\n"
         "Nhập:\n"
         "/tracuu [Mã CK]\n\n"
         "Ví dụ:\n"
         "/tracuu MCH\n\n"
-        "Sau khi phân tích, bạn có thể chọn:\n"
-        "⭐ SmartScore — xem điểm của mã\n"
-        "🏭 Ngành — xem ngành của mã\n"
-        "📈 Biểu đồ — xem biểu đồ kỹ thuật\n\n"
+
+        "📊 TỐI ƯU DANH MỤC\n"
+        "Chọn TỐI ƯU DANH MỤC trên trang chủ.\n"
+        "Nhập danh sách mã, sau đó nhập số vốn.\n\n"
+        "Ví dụ:\n"
+        "VIC,FPT,MBB,VNM\n"
+        "100000000\n\n"
+
+        "⭐ SMARTSCORE\n"
+        "Xem điểm của mã đang tra cứu.\n\n"
+
+        "🏭 NGÀNH\n"
+        "Xem ngành của mã đang tra cứu.\n\n"
+
+        "📈 BIỂU ĐỒ\n"
+        "Xem biểu đồ nến và các đường EMA/SMA.\n\n"
+
         "⚠️ Đây là kết quả phân tích tự động, "
         "không phải khuyến nghị đầu tư."
     )
@@ -287,6 +350,7 @@ def get_latest_stock(symbol):
 
     try:
         result = process_universe(df)
+
     except Exception as e:
         print(f"Lỗi process {symbol}: {e}")
         return None
@@ -320,6 +384,7 @@ def calculate_trade_plan(row):
 
     try:
         close = float(close)
+
     except Exception:
         return (
             "📌 KẾ HOẠCH GIAO DỊCH\n"
@@ -332,7 +397,8 @@ def calculate_trade_plan(row):
             "📌 KẾ HOẠCH GIAO DỊCH\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             f"• Điểm vào tham chiếu: {format_price(close)}\n"
-            "• Chưa đủ dữ liệu ATR14 để tính cắt lỗ và mục tiêu."
+            "• Chưa đủ dữ liệu ATR14 để tính "
+            "cắt lỗ và mục tiêu."
         )
 
     atr14 = float(atr14)
@@ -351,7 +417,6 @@ def calculate_trade_plan(row):
         # R:R = 1:2
         target_price = entry_price + (6 * atr14)
 
-        # Không cho giá cắt lỗ âm
         stop_loss = max(stop_loss, 0)
 
         risk_amount = entry_price - stop_loss
@@ -393,6 +458,7 @@ def calculate_trade_plan(row):
         entry_price = close
 
         stop_loss = entry_price - (3 * atr14)
+
         target_price = entry_price + (6 * atr14)
 
         stop_loss = max(stop_loss, 0)
@@ -442,28 +508,34 @@ def calculate_trade_plan(row):
         f"💰 Giá hiện tại: {format_price(close)}\n"
         "Chưa xác định được kế hoạch giao dịch."
     )
+
+
 # ============================================================
 # NỘI DUNG PHÂN TÍCH
 # ============================================================
 
 def build_analysis_message(row):
 
-    symbol = str(row.get("Symbol", "")).upper()
+    symbol = str(
+        row.get("Symbol", "")
+    ).upper()
 
     close = row.get("Close")
     ema20 = row.get("EMA20")
     ema50 = row.get("EMA50")
     sma200 = row.get("SMA200")
     rs = row.get("RS")
-    adx = row.get("ADX14")
-    atr_ratio = row.get("ATR14_Ratio")
-    liquidity = row.get("Liquidity_ok")
-    signal = str(row.get("Signal", "GIỮ"))
+
+    signal = str(
+        row.get("Signal", "GIỮ")
+    )
 
     if signal == "MUA":
         signal_icon = "🟢"
+
     elif signal == "BÁN":
         signal_icon = "🔴"
+
     else:
         signal_icon = "🟡"
 
@@ -478,6 +550,7 @@ def build_analysis_message(row):
     ]
 
     if signal == "MUA":
+
         reason = []
 
         if not pd.isna(rs) and float(rs) >= 60:
@@ -498,30 +571,58 @@ def build_analysis_message(row):
             reason.append("Giá > SMA200")
 
         if reason:
+
             lines.append("📝 NHẬN ĐỊNH")
-            lines.append("Tín hiệu MUA do " + ", ".join(reason) + ".")
+
+            lines.append(
+                "Tín hiệu MUA do "
+                + ", ".join(reason)
+                + "."
+            )
 
     elif signal == "BÁN":
 
-        if not pd.isna(close) and not pd.isna(sma200):
+        if (
+            not pd.isna(close)
+            and not pd.isna(sma200)
+        ):
+
             if float(close) < float(sma200):
+
                 lines.append("📝 NHẬN ĐỊNH")
-                lines.append("Tín hiệu BÁN do giá đóng cửa dưới SMA200.")
-            elif not pd.isna(rs) and float(rs) < 50:
+
+                lines.append(
+                    "Tín hiệu BÁN do giá đóng cửa dưới SMA200."
+                )
+
+            elif (
+                not pd.isna(rs)
+                and float(rs) < 50
+            ):
+
                 lines.append("📝 NHẬN ĐỊNH")
-                lines.append("Tín hiệu BÁN do RS dưới 50.")
+
+                lines.append(
+                    "Tín hiệu BÁN do RS dưới 50."
+                )
 
     else:
+
         lines.append("📝 NHẬN ĐỊNH")
+
         lines.append(
-            "Chưa xuất hiện đầy đủ điều kiện để phát tín hiệu MUA hoặc BÁN."
+            "Chưa xuất hiện đầy đủ điều kiện "
+            "để phát tín hiệu MUA hoặc BÁN."
         )
 
     lines.append("")
 
-    lines.append(calculate_trade_plan(row))
+    lines.append(
+        calculate_trade_plan(row)
+    )
 
     lines.append("")
+
     lines.append(
         "⚠️ Đây là kết quả phân tích tự động, "
         "không phải khuyến nghị đầu tư."
@@ -536,7 +637,9 @@ def build_analysis_message(row):
 
 def build_stock_smartscore(row):
 
-    symbol = str(row.get("Symbol", "")).upper()
+    symbol = str(
+        row.get("Symbol", "")
+    ).upper()
 
     score = row.get("SmartScore")
 
@@ -548,6 +651,7 @@ def build_stock_smartscore(row):
 
     try:
         score = float(score)
+
     except Exception:
         score = 0
 
@@ -569,82 +673,82 @@ def build_stock_smartscore(row):
     anti_chasing = row.get("AntiChasing")
     near_high = row.get("PriceNearHigh_ok")
 
-    # --------------------------------------------------------
     # Relative Strength — 30 điểm
-    # --------------------------------------------------------
 
     if not pd.isna(rs):
+
         try:
-            rs_score = min(max(float(rs) / 100 * 30, 0), 30)
+            rs_score = min(
+                max(float(rs) / 100 * 30, 0),
+                30
+            )
+
         except Exception:
             rs_score = 0
 
-    # --------------------------------------------------------
     # EMA20 / EMA50 — 20 điểm
-    # --------------------------------------------------------
 
     if (
         not pd.isna(ema20)
         and not pd.isna(ema50)
         and float(ema20) > float(ema50)
     ):
+
         ema_score = 20
 
-    # --------------------------------------------------------
     # SMA200 — 15 điểm
-    # --------------------------------------------------------
 
     if (
         not pd.isna(close)
         and not pd.isna(sma200)
         and float(close) > float(sma200)
     ):
+
         sma_score = 15
 
-    # --------------------------------------------------------
     # Liquidity — 15 điểm
-    # --------------------------------------------------------
 
     if bool(liquidity):
         liquidity_score = 15
 
-    # --------------------------------------------------------
     # ADX — 10 điểm
-    # --------------------------------------------------------
 
     if not pd.isna(adx):
 
         try:
+
             adx_value = float(adx)
 
             if adx_value >= 20:
                 adx_score = 10
+
             else:
-                adx_score = max(adx_value / 20 * 10, 0)
+                adx_score = max(
+                    adx_value / 20 * 10,
+                    0
+                )
 
         except Exception:
             adx_score = 0
 
-    # --------------------------------------------------------
     # Anti-chasing — 5 điểm
-    # --------------------------------------------------------
 
     if not pd.isna(anti_chasing):
 
         try:
+
             anti_value = float(anti_chasing)
 
             if anti_value <= 3:
                 anti_score = 5
+
             elif anti_value <= 5:
                 anti_score = 2.5
 
         except Exception:
             anti_score = 0
 
-    # --------------------------------------------------------
     # Near 252-high — 5 điểm
-    # --------------------------------------------------------
 
     if bool(near_high):
         high_score = 5
@@ -659,8 +763,6 @@ def build_stock_smartscore(row):
         + high_score
     )
 
-    # Nếu module smartscore đã tính điểm thì ưu tiên điểm đó.
-    # Nếu không có thì dùng điểm tính lại ở trên.
     if pd.isna(row.get("SmartScore")):
         score = calculated_score
 
@@ -689,7 +791,11 @@ def build_stock_smartscore(row):
 def load_sector_data():
 
     if not os.path.exists(SECTOR_FILE):
-        print(f"Không tìm thấy file: {SECTOR_FILE}")
+
+        print(
+            f"Không tìm thấy file: {SECTOR_FILE}"
+        )
+
         return pd.DataFrame()
 
     try:
@@ -712,7 +818,9 @@ def load_sector_data():
 
     except Exception as e:
 
-        print(f"Lỗi đọc {SECTOR_FILE}: {e}")
+        print(
+            f"Lỗi đọc {SECTOR_FILE}: {e}"
+        )
 
         return pd.DataFrame()
 
@@ -730,6 +838,7 @@ def get_sector_column(df):
     ]
 
     for column in possible_columns:
+
         if column in df.columns:
             return column
 
@@ -751,6 +860,7 @@ def get_symbol_column(df):
     ]
 
     for column in possible_columns:
+
         if column in df.columns:
             return column
 
@@ -759,7 +869,9 @@ def get_symbol_column(df):
 
 def get_stock_sector(symbol):
 
-    symbol = str(symbol).strip().upper()
+    symbol = str(
+        symbol
+    ).strip().upper()
 
     df = load_sector_data()
 
@@ -769,12 +881,22 @@ def get_stock_sector(symbol):
     sector_column = get_sector_column(df)
     symbol_column = get_symbol_column(df)
 
-    if sector_column is None or symbol_column is None:
+    if (
+        sector_column is None
+        or symbol_column is None
+    ):
 
-        print("Không tìm thấy cột mã hoặc cột ngành.")
+        print(
+            "Không tìm thấy cột mã hoặc cột ngành."
+        )
 
-        print("Các cột hiện có:")
-        print(df.columns.tolist())
+        print(
+            "Các cột hiện có:"
+        )
+
+        print(
+            df.columns.tolist()
+        )
 
         return None
 
@@ -789,7 +911,9 @@ def get_stock_sector(symbol):
     if matched.empty:
         return None
 
-    sector = matched.iloc[0][sector_column]
+    sector = matched.iloc[0][
+        sector_column
+    ]
 
     if pd.isna(sector):
         return None
@@ -799,11 +923,9 @@ def get_stock_sector(symbol):
     if not sector:
         return None
 
-    # Nếu file đã chứa tiếng Việt
     if sector in SECTOR_VI.values():
         return sector
 
-    # Nếu file chứa tiếng Anh
     if sector in SECTOR_VI:
         return SECTOR_VI[sector]
 
@@ -814,12 +936,14 @@ def get_stock_sector(symbol):
 
 
 # ============================================================
-# HIỂN THỊ NGÀNH CỦA MÃ
+# HIỂN THỊ NGÀNH
 # ============================================================
 
 def build_sector_message(symbol):
 
-    symbol = str(symbol).strip().upper()
+    symbol = str(
+        symbol
+    ).strip().upper()
 
     sector = get_stock_sector(symbol)
 
@@ -840,10 +964,146 @@ def build_sector_message(symbol):
 
 
 # ============================================================
+# TỐI ƯU DANH MỤC
+# ============================================================
+
+def build_portfolio_message(result):
+
+    if not result.get("success"):
+
+        message = (
+            "❌ KHÔNG THỂ TỐI ƯU DANH MỤC\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"{result.get('message', 'Có lỗi xảy ra.')}"
+        )
+
+        invalid_symbols = result.get(
+            "invalid_symbols",
+            []
+        )
+
+        if invalid_symbols:
+
+            message += (
+                "\n\n⚠️ Không tìm thấy dữ liệu:\n"
+                + ", ".join(invalid_symbols)
+            )
+
+        return message
+
+    capital = result["capital"]
+    stocks = result["stocks"]
+
+    invalid_symbols = result.get(
+        "invalid_symbols",
+        []
+    )
+
+    lines = [
+        "📊 TỐI ƯU DANH MỤC",
+        "━━━━━━━━━━━━━━━━━━",
+        "",
+        f"💰 Tổng vốn: {format_vnd(capital)}",
+        "",
+        "📌 PHÂN BỔ ĐỀ XUẤT",
+        "",
+    ]
+
+    for item in stocks:
+
+        symbol = item["symbol"]
+
+        weight = (
+            item["weight"] * 100
+        )
+
+        amount = item["amount"]
+
+        signal = item["signal"]
+
+        smartscore = item["smartscore"]
+
+        lines.append(
+            f"📈 {symbol}"
+        )
+
+        lines.append(
+            f"   • Tỷ trọng: {weight:.1f}%"
+        )
+
+        lines.append(
+            f"   • Số tiền: {format_vnd(amount)}"
+        )
+
+        lines.append(
+            f"   • SmartScore: {smartscore:.1f}/100"
+        )
+
+        lines.append(
+            f"   • Tín hiệu: {signal}"
+        )
+
+        lines.append("")
+
+    if invalid_symbols:
+
+        lines.append(
+            "⚠️ Không có dữ liệu:"
+        )
+
+        lines.append(
+            ", ".join(invalid_symbols)
+        )
+
+        lines.append("")
+
+    lines.extend([
+        "━━━━━━━━━━━━━━━━━━",
+        "",
+        "📌 Phương pháp:",
+        "• SmartScore làm điểm cơ sở",
+        "• Điều chỉnh theo ATR14/Close",
+        "• Tối đa 30% cho một mã",
+        "• Tổng tỷ trọng = 100%",
+        "",
+        "⚠️ Tỷ trọng là kết quả của mô hình "
+        "phân bổ tự động, không phải khuyến nghị đầu tư.",
+    ])
+
+    return "\n".join(lines)
+
+
+async def portfolio_start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    context.user_data["portfolio_step"] = "symbols"
+    context.user_data["portfolio_symbols"] = None
+
+    message = (
+        "📊 TỐI ƯU DANH MỤC\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Nhập các mã cổ phiếu muốn đưa vào danh mục.\n\n"
+        "Ví dụ:\n"
+        "VIC,FPT,MBB,VNM\n\n"
+        "💡 Các mã cách nhau bằng dấu phẩy."
+    )
+
+    await update.message.reply_text(
+        message,
+        reply_markup=portfolio_keyboard()
+    )
+
+
+# ============================================================
 # /TRACUU
 # ============================================================
 
-async def tracuu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def tracuu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     if not context.args:
 
@@ -857,9 +1117,12 @@ async def tracuu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    symbol = context.args[0].strip().upper()
+    symbol = (
+        context.args[0]
+        .strip()
+        .upper()
+    )
 
-    # Chỉ nhận mã đơn giản
     if not symbol.isalnum():
 
         await update.message.reply_text(
@@ -879,7 +1142,9 @@ async def tracuu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        print(f"Lỗi tra cứu {symbol}: {e}")
+        print(
+            f"Lỗi tra cứu {symbol}: {e}"
+        )
 
         await update.message.reply_text(
             f"❌ Không thể phân tích {symbol}.\n\n"
@@ -897,7 +1162,6 @@ async def tracuu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # Đảm bảo mã hiển thị đúng
     if "Symbol" not in row.index:
         row["Symbol"] = symbol
 
@@ -930,6 +1194,9 @@ async def button_callback(
 
     if data == "search":
 
+        context.user_data["portfolio_step"] = None
+        context.user_data["portfolio_symbols"] = None
+
         await query.message.reply_text(
             "🔎 TRA CỨU CỔ PHIẾU\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
@@ -937,6 +1204,27 @@ async def button_callback(
             "/tracuu [Mã CK]\n\n"
             "Ví dụ:\n"
             "/tracuu MCH"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # TỐI ƯU DANH MỤC
+    # --------------------------------------------------------
+
+    if data == "portfolio":
+
+        context.user_data["portfolio_step"] = "symbols"
+        context.user_data["portfolio_symbols"] = None
+
+        await query.message.reply_text(
+            "📊 TỐI ƯU DANH MỤC\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Nhập các mã cổ phiếu muốn đưa vào danh mục.\n\n"
+            "Ví dụ:\n"
+            "VIC,FPT,MBB,VNM\n\n"
+            "💡 Các mã cách nhau bằng dấu phẩy.",
+            reply_markup=portfolio_keyboard()
         )
 
         return
@@ -950,18 +1238,29 @@ async def button_callback(
         message = (
             "❓ HƯỚNG DẪN FINBOT\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
+
             "🔎 TRA CỨU\n"
             "Dùng lệnh:\n"
             "/tracuu [Mã CK]\n\n"
             "Ví dụ:\n"
             "/tracuu MCH\n\n"
-            "Sau khi có kết quả, bạn có thể chọn:\n\n"
+
+            "📊 TỐI ƯU DANH MỤC\n"
+            "Chọn TỐI ƯU DANH MỤC trên trang chủ.\n"
+            "Sau đó nhập danh sách mã và số vốn.\n\n"
+            "Ví dụ:\n"
+            "VIC,FPT,MBB,VNM\n"
+            "100000000\n\n"
+
             "⭐ SMARTSCORE\n"
             "Xem điểm số của chính mã đang tra cứu.\n\n"
+
             "🏭 NGÀNH\n"
             "Xem ngành của chính mã đang tra cứu.\n\n"
+
             "📈 BIỂU ĐỒ\n"
             "Xem biểu đồ nến và các đường EMA/SMA.\n\n"
+
             "⚠️ Kết quả là phân tích tự động, "
             "không phải khuyến nghị đầu tư."
         )
@@ -979,7 +1278,12 @@ async def button_callback(
 
     if data.startswith("smartscore:"):
 
-        symbol = data.split(":", 1)[1].strip().upper()
+        symbol = (
+            data
+            .split(":", 1)[1]
+            .strip()
+            .upper()
+        )
 
         await query.message.reply_text(
             f"⭐ Đang tính SmartScore {symbol}..."
@@ -991,7 +1295,9 @@ async def button_callback(
 
         except Exception as e:
 
-            print(f"Lỗi SmartScore {symbol}: {e}")
+            print(
+                f"Lỗi SmartScore {symbol}: {e}"
+            )
 
             await query.message.reply_text(
                 f"❌ Không thể lấy SmartScore cho {symbol}."
@@ -1020,7 +1326,12 @@ async def button_callback(
 
     if data.startswith("sector:"):
 
-        symbol = data.split(":", 1)[1].strip().upper()
+        symbol = (
+            data
+            .split(":", 1)[1]
+            .strip()
+            .upper()
+        )
 
         message = build_sector_message(symbol)
 
@@ -1037,7 +1348,12 @@ async def button_callback(
 
     if data.startswith("chart:"):
 
-        symbol = data.split(":", 1)[1].strip().upper()
+        symbol = (
+            data
+            .split(":", 1)[1]
+            .strip()
+            .upper()
+        )
 
         await query.message.reply_text(
             f"📈 Đang tạo biểu đồ {symbol}..."
@@ -1061,7 +1377,9 @@ async def button_callback(
 
         except Exception as e:
 
-            print(f"Lỗi tạo chart {symbol}: {e}")
+            print(
+                f"Lỗi tạo chart {symbol}: {e}"
+            )
 
             await query.message.reply_text(
                 f"❌ Không thể tạo biểu đồ {symbol}.\n\n"
@@ -1076,6 +1394,9 @@ async def button_callback(
     # --------------------------------------------------------
 
     if data == "search_other":
+
+        context.user_data["portfolio_step"] = None
+        context.user_data["portfolio_symbols"] = None
 
         await query.message.reply_text(
             "🔎 TRA CỨU MÃ KHÁC\n"
@@ -1092,6 +1413,9 @@ async def button_callback(
     # --------------------------------------------------------
 
     if data == "home":
+
+        context.user_data["portfolio_step"] = None
+        context.user_data["portfolio_symbols"] = None
 
         await query.message.reply_text(
             "🏠 FINBOT\n"
@@ -1117,12 +1441,180 @@ async def text_stock_search(
     if not text:
         return
 
-    # Cho phép người dùng nhập trực tiếp:
-    # MCH
-    # VIC
-    # FPT
-    #
-    # Nhưng không xử lý các câu quá dài.
+    # ========================================================
+    # BƯỚC 1: NHẬP DANH SÁCH CỔ PHIẾU
+    # ========================================================
+
+    if context.user_data.get(
+        "portfolio_step"
+    ) == "symbols":
+
+        symbols = [
+            symbol.strip().upper()
+            for symbol in text.split(",")
+            if symbol.strip()
+        ]
+
+        symbols = list(
+            dict.fromkeys(symbols)
+        )
+
+        if not symbols:
+
+            await update.message.reply_text(
+                "⚠️ Chưa nhận được mã cổ phiếu.\n\n"
+                "Ví dụ:\n"
+                "VIC,FPT,MBB,VNM"
+            )
+
+            return
+
+        invalid_symbols = [
+            symbol
+            for symbol in symbols
+            if not symbol.isalnum()
+        ]
+
+        if invalid_symbols:
+
+            await update.message.reply_text(
+                "⚠️ Mã không hợp lệ:\n"
+                + ", ".join(invalid_symbols)
+                + "\n\n"
+                "Vui lòng nhập lại theo dạng:\n"
+                "VIC,FPT,MBB,VNM"
+            )
+
+            return
+
+        context.user_data[
+            "portfolio_symbols"
+        ] = symbols
+
+        context.user_data[
+            "portfolio_step"
+        ] = "capital"
+
+        await update.message.reply_text(
+            "💰 NHẬP SỐ VỐN\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Nhập tổng số vốn muốn phân bổ.\n\n"
+            "Ví dụ:\n"
+            "100000000\n\n"
+            "Tức là 100 triệu VNĐ."
+        )
+
+        return
+
+    # ========================================================
+    # BƯỚC 2: NHẬP SỐ VỐN
+    # ========================================================
+
+    if context.user_data.get(
+        "portfolio_step"
+    ) == "capital":
+
+        capital_text = (
+            text
+            .replace(",", "")
+            .replace(".", "")
+            .replace(" ", "")
+        )
+
+        try:
+
+            capital = float(
+                capital_text
+            )
+
+        except Exception:
+
+            await update.message.reply_text(
+                "⚠️ Số vốn không hợp lệ.\n\n"
+                "Ví dụ:\n"
+                "100000000"
+            )
+
+            return
+
+        if capital <= 0:
+
+            await update.message.reply_text(
+                "⚠️ Số vốn phải lớn hơn 0."
+            )
+
+            return
+
+        symbols = context.user_data.get(
+            "portfolio_symbols",
+            []
+        )
+
+        if not symbols:
+
+            context.user_data[
+                "portfolio_step"
+            ] = None
+
+            await update.message.reply_text(
+                "❌ Không tìm thấy danh sách mã.\n\n"
+                "Vui lòng bắt đầu lại."
+            )
+
+            return
+
+        await update.message.reply_text(
+            "⏳ ĐANG TỐI ƯU DANH MỤC...\n\n"
+            f"Đang phân tích {len(symbols)} mã:\n"
+            f"{', '.join(symbols)}"
+        )
+
+        try:
+
+            result = optimize_portfolio(
+                symbols,
+                capital
+            )
+
+        except Exception as e:
+
+            print(
+                f"Lỗi tối ưu danh mục: {e}"
+            )
+
+            context.user_data[
+                "portfolio_step"
+            ] = None
+
+            await update.message.reply_text(
+                "❌ Không thể tối ưu danh mục.\n\n"
+                f"Chi tiết lỗi: {e}"
+            )
+
+            return
+
+        context.user_data[
+            "portfolio_step"
+        ] = None
+
+        context.user_data[
+            "portfolio_symbols"
+        ] = None
+
+        message = build_portfolio_message(
+            result
+        )
+
+        await update.message.reply_text(
+            message,
+            reply_markup=main_keyboard()
+        )
+
+        return
+
+    # ========================================================
+    # TRA CỨU CỔ PHIẾU BÌNH THƯỜNG
+    # ========================================================
 
     if len(text) > 10:
         return
@@ -1142,7 +1634,9 @@ async def text_stock_search(
 
     except Exception as e:
 
-        print(f"Lỗi tra cứu {symbol}: {e}")
+        print(
+            f"Lỗi tra cứu {symbol}: {e}"
+        )
 
         await update.message.reply_text(
             f"❌ Không thể phân tích {symbol}."
@@ -1187,24 +1681,38 @@ def run_bot():
     )
 
     # Commands
+
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     )
 
     application.add_handler(
-        CommandHandler("help", help_command)
+        CommandHandler(
+            "help",
+            help_command
+        )
     )
 
     application.add_handler(
-        CommandHandler("tracuu", tracuu)
+        CommandHandler(
+            "tracuu",
+            tracuu
+        )
     )
 
     # Buttons
+
     application.add_handler(
-        CallbackQueryHandler(button_callback)
+        CallbackQueryHandler(
+            button_callback
+        )
     )
 
     # Text search
+
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
