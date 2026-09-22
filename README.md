@@ -24,16 +24,16 @@ Trong thư mục gốc của dự án, bạn cần tạo một file có tên là
 
 ```ini
 # Cấu hình Telegram Bot
-TELEGRAM_TOKEN=token_bot_cua_anh
-TELEGRAM_CHAT_ID=chat_id_cua_anh
+TELEGRAM_TOKEN=token_bot_cua_thay_co
+TELEGRAM_CHAT_ID=chat_id_cua_thay_co
 
 # Cấu hình FireAnt API (Bắt buộc để lấy dữ liệu)
-FIREANT_COOKIE=cookie_fireant_cua_anh
+FIREANT_COOKIE=cookie_fireant_cua_thay_co
 ```
 
-**📌 Lưu ý về Token và Cookie:**
-- **Telegram Token:** Thì anh tạo con bot Telegram khác, rồi anh lấy token anh đưa vào thôi.
-- **FireAnt Cookie:** Còn cookie FireAnt thì anh tự đi lấy nhé.
+**📌 Lưu ý về Token và Cookie dành cho người chấm bài:**
+- **Telegram Token:** Để đảm bảo tính bảo mật cá nhân, nhóm không đính kèm mã Token thật. Giảng viên vui lòng tạo một Bot Telegram mới qua `@BotFather` và sử dụng Token đó để chạy thử nghiệm hệ thống.
+- **FireAnt Cookie:** Giảng viên vui lòng sử dụng mã Cookie từ tài khoản FireAnt cá nhân để hệ thống có quyền truy cập và tải dữ liệu thị trường.
 
 ---
 
