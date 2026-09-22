@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+fireant_universe.csv
+backtest_equity_curve.csv
+backtest_summary.csv
+backtest_trades.csv
