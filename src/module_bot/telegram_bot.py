@@ -1,4 +1,5 @@
 import os
+import asyncio
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -10,8 +11,18 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from src.module_thu_thap_du_lieu.market_data import get_market_data
-from src.module_tinh_toan_xu_ly.processor import process_universe
+from src.module_thu_thap_du_lieu.market_data import (
+    get_market_data,
+    get_stock_data
+)
+
+from src.module_tinh_toan_xu_ly.processor import (
+    process_universe
+)
+
+from src.module_bot.chart import (
+    create_candlestick_chart
+)
 
 
 # =========================================================
@@ -75,7 +86,6 @@ def format_money(value):
 def calculate_trade_plan(row):
 
     entry = row["Close"]
-
     atr = row["ATR14"]
 
     if (
@@ -123,6 +133,7 @@ async def start(
 • Phân tích tín hiệu MUA / BÁN / GIỮ
 • Tra cứu cổ phiếu
 • Theo dõi tín hiệu thị trường
+• Xem biểu đồ nến
 
 📚 Gõ /help để xem toàn bộ lệnh.
 
@@ -167,6 +178,12 @@ Phân tích chi tiết 1 mã cổ phiếu.
 Ví dụ:
 /tracuu FPT
 
+/bieudo [Mã CK]
+Xem biểu đồ nến và các đường EMA/SMA.
+
+Ví dụ:
+/bieudo FPT
+
 ⚠️ Tín hiệu chỉ mang tính tham khảo,
 không phải khuyến nghị đầu tư.
 """
@@ -191,7 +208,14 @@ async def tinhieu(
 
     try:
 
-        df = get_market_data()
+        # -------------------------------------------------
+        # Lấy dữ liệu toàn bộ thị trường
+        # Dùng cho tính RS và tín hiệu toàn universe
+        # -------------------------------------------------
+
+        df = await asyncio.to_thread(
+            get_market_data
+        )
 
         if df is None or df.empty:
 
@@ -201,7 +225,14 @@ async def tinhieu(
 
             return
 
-        result = process_universe(df)
+        # -------------------------------------------------
+        # Xử lý dữ liệu
+        # -------------------------------------------------
+
+        result = await asyncio.to_thread(
+            process_universe,
+            df
+        )
 
         if result.empty:
 
@@ -218,12 +249,20 @@ async def tinhieu(
             & (result["DataSufficient"])
         ].copy()
 
+        # -------------------------------------------------
+        # MUA
+        # -------------------------------------------------
+
         buy_list = latest[
             latest["Signal"] == "MUA"
         ].sort_values(
             "RS",
             ascending=False
         )
+
+        # -------------------------------------------------
+        # BÁN
+        # -------------------------------------------------
 
         sell_list = latest[
             latest["Signal"] == "BÁN"
@@ -232,15 +271,19 @@ async def tinhieu(
             ascending=False
         )
 
+        # -------------------------------------------------
+        # HEADER
+        # -------------------------------------------------
+
         message = (
             "📊 TÍN HIỆU THỊ TRƯỜNG\n"
             f"📅 Ngày: "
             f"{latest_date.strftime('%d/%m/%Y')}\n\n"
         )
 
-        # -------------------------
-        # MUA
-        # -------------------------
+        # -------------------------------------------------
+        # DANH SÁCH MUA
+        # -------------------------------------------------
 
         message += "🟢 TÍN HIỆU MUA\n"
 
@@ -260,9 +303,9 @@ async def tinhieu(
                     f"| RS: {row['RS']:.1f}\n"
                 )
 
-        # -------------------------
-        # BÁN
-        # -------------------------
+        # -------------------------------------------------
+        # DANH SÁCH BÁN
+        # -------------------------------------------------
 
         message += "\n🔴 TÍN HIỆU BÁN\n"
 
@@ -282,9 +325,18 @@ async def tinhieu(
                     f"| RS: {row['RS']:.1f}\n"
                 )
 
+        # -------------------------------------------------
+        # FOOTER
+        # -------------------------------------------------
+
         message += (
             "\n💡 Dùng /tracuu [Mã CK] "
             "để xem phân tích chi tiết."
+        )
+
+        message += (
+            "\n💡 Dùng /bieudo [Mã CK] "
+            "để xem biểu đồ nến."
         )
 
         message += (
@@ -312,24 +364,27 @@ async def tinhieu(
 
 def get_latest_stock(symbol):
 
-    df = get_market_data()
+    symbol = symbol.strip().upper()
+
+    # -----------------------------------------------------
+    # Lấy riêng dữ liệu của mã
+    # Không gọi get_market_data() nữa
+    # -----------------------------------------------------
+
+    df = get_stock_data(
+        symbol
+    )
 
     if df is None or df.empty:
         return None
 
-    symbol = symbol.strip().upper()
+    # -----------------------------------------------------
+    # Xử lý dữ liệu
+    # -----------------------------------------------------
 
-    df = df[
-        df["Symbol"]
-        .astype(str)
-        .str.upper()
-        == symbol
-    ].copy()
-
-    if df.empty:
-        return None
-
-    result = process_universe(df)
+    result = process_universe(
+        df
+    )
 
     if result.empty:
         return None
@@ -489,7 +544,12 @@ def build_analysis_message(row):
         "\n📊 XÁC NHẬN TÍN HIỆU\n"
     )
 
-    if bool(row.get("EMA_ok", False)):
+    if bool(
+        row.get(
+            "EMA_ok",
+            False
+        )
+    ):
 
         message += (
             "• EMA20 > EMA50: ✅\n"
@@ -501,7 +561,12 @@ def build_analysis_message(row):
             "• EMA20 > EMA50: ❌\n"
         )
 
-    if bool(row.get("SMA200_ok", False)):
+    if bool(
+        row.get(
+            "SMA200_ok",
+            False
+        )
+    ):
 
         message += (
             "• Giá > SMA200: ✅\n"
@@ -513,7 +578,12 @@ def build_analysis_message(row):
             "• Giá > SMA200: ❌\n"
         )
 
-    if bool(row.get("Donchian_ok", False)):
+    if bool(
+        row.get(
+            "Donchian_ok",
+            False
+        )
+    ):
 
         message += (
             "• Donchian breakout: ✅\n"
@@ -542,7 +612,12 @@ def build_analysis_message(row):
             "• Volume breakout: ❌\n"
         )
 
-    if bool(row.get("CLV_ok", False)):
+    if bool(
+        row.get(
+            "CLV_ok",
+            False
+        )
+    ):
 
         message += (
             "• CLV ≥ 0.6: ✅\n"
@@ -591,7 +666,9 @@ def build_analysis_message(row):
 
     if signal == "MUA":
 
-        plan = calculate_trade_plan(row)
+        plan = calculate_trade_plan(
+            row
+        )
 
         message += (
             "\n🎯 KẾ HOẠCH GIAO DỊCH\n"
@@ -734,7 +811,13 @@ async def tracuu(
 
     try:
 
-        row = get_latest_stock(
+        # -------------------------------------------------
+        # Lấy riêng dữ liệu mã cổ phiếu
+        # và chạy ở thread riêng
+        # -------------------------------------------------
+
+        row = await asyncio.to_thread(
+            get_latest_stock,
             symbol
         )
 
@@ -778,6 +861,69 @@ async def tracuu(
         await update.message.reply_text(
             f"❌ Có lỗi khi phân tích "
             f"{symbol}:\n{e}"
+        )
+
+
+# =========================================================
+# /BIEUDO
+# =========================================================
+
+async def bieudo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not context.args:
+
+        await update.message.reply_text(
+            "❗ Vui lòng nhập mã cổ phiếu.\n\n"
+            "Ví dụ:\n"
+            "/bieudo FPT"
+        )
+
+        return
+
+    symbol = context.args[0].upper()
+
+    await update.message.reply_text(
+        f"🕯️ Đang tạo biểu đồ {symbol}..."
+    )
+
+    try:
+
+        # -------------------------------------------------
+        # Chạy việc lấy dữ liệu + vẽ chart
+        # ở thread riêng để bot không bị đứng
+        # -------------------------------------------------
+
+        image = await asyncio.to_thread(
+            create_candlestick_chart,
+            symbol
+        )
+
+        await update.message.reply_photo(
+            photo=image,
+            caption=(
+                f"🕯️ BIỂU ĐỒ {symbol}\n\n"
+                "• Nến OHLC\n"
+                "• EMA20\n"
+                "• EMA50\n"
+                "• SMA200\n"
+                "• Volume\n\n"
+                "📌 120 phiên gần nhất."
+            )
+        )
+
+    except Exception as e:
+
+        print(
+            f"Lỗi /bieudo {symbol}: {e}"
+        )
+
+        await update.message.reply_text(
+            f"❌ Không thể tạo biểu đồ "
+            f"{symbol}.\n\n"
+            f"Lỗi: {e}"
         )
 
 
@@ -833,6 +979,13 @@ def run_bot():
         CommandHandler(
             "tracuu",
             tracuu
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "bieudo",
+            bieudo
         )
     )
 
