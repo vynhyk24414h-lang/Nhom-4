@@ -4,4 +4,6 @@ __pycache__/
 fireant_universe.csv
 backtest_equity_curve.csv
 backtest_summary.csv
+backtest_trades.csvstock_cache/
+backtest_trades.csv
 backtest_trades.csv
