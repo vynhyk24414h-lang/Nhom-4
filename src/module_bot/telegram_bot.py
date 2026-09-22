@@ -1,732 +1,873 @@
+import io
 import os
 
-import pandas as pd
 from dotenv import load_dotenv
-
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
-
-from src.module_thu_thap_du_lieu.market_data import get_market_data
-from src.module_tinh_toan_xu_ly.processor import process_universe
-
-
-# =========================================================
-# LOAD ENV
-# =========================================================
 
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN"
+import pandas as pd
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
 )
 
-
-# =========================================================
-# CẤU HÌNH KẾ HOẠCH GIAO DỊCH
-# =========================================================
-
-SL_ATR_MULTIPLIER = 3
-TP_RR = 2
+from src.module_thu_thap_du_lieu.market_data import get_stock_data
+from src.module_tinh_toan_xu_ly.processor import process_universe
+from src.module_bot.chart import create_candlestick_chart
 
 
-# =========================================================
-# FORMAT
-# =========================================================
+# ============================================================
+# CẤU HÌNH
+# ============================================================
+
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+SECTOR_FILE = "stock_sector.csv"
+
+
+# ============================================================
+# MAPPING NGÀNH
+# ============================================================
+
+SECTOR_VI = {
+    "Commercial services": "Dịch vụ thương mại",
+    "Communications": "Truyền thông",
+    "Consumer durables": "Hàng tiêu dùng lâu bền",
+    "Consumer non-durables": "Hàng tiêu dùng không lâu bền",
+    "Consumer services": "Dịch vụ tiêu dùng",
+    "Distribution services": "Dịch vụ phân phối",
+    "Electronic technology": "Công nghệ điện tử",
+    "Energy minerals": "Khoáng sản năng lượng",
+    "Finance": "Tài chính",
+    "Health services": "Dịch vụ y tế",
+    "Health technology": "Công nghệ y tế",
+    "Industrial services": "Dịch vụ công nghiệp",
+    "Non-energy minerals": "Khoáng sản phi năng lượng",
+    "Process industries": "Công nghiệp chế biến",
+    "Producer manufacturing": "Sản xuất công nghiệp",
+    "Retail trade": "Bán lẻ",
+    "Technology services": "Dịch vụ công nghệ",
+    "Transportation": "Vận tải",
+    "Utilities": "Tiện ích",
+    "Unknown": "Chưa phân loại",
+}
+
+
+# ============================================================
+# HÀM FORMAT
+# ============================================================
 
 def format_price(value):
-
-    if value is None or pd.isna(value):
+    if pd.isna(value):
         return "N/A"
 
-    return f"{value:,.0f} đ"
+    try:
+        value = float(value)
+
+        if value >= 1000:
+            return f"{value:,.0f} đ"
+
+        return f"{value:,.2f} đ"
+
+    except Exception:
+        return str(value)
 
 
 def format_money(value):
-
-    if value is None or pd.isna(value):
+    if pd.isna(value):
         return "N/A"
 
-    value = float(value)
+    try:
+        value = float(value)
 
-    if value >= 1_000_000_000:
+        if value >= 1_000_000_000_000:
+            return f"{value / 1_000_000_000_000:.2f} nghìn tỷ"
 
-        return (
-            f"{value / 1_000_000_000:.2f} tỷ"
-        )
+        if value >= 1_000_000_000:
+            return f"{value / 1_000_000_000:.2f} tỷ"
 
-    if value >= 1_000_000:
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.2f} triệu"
 
-        return (
-            f"{value / 1_000_000:.2f} triệu"
-        )
+        return f"{value:,.0f}"
 
-    return f"{value:,.0f} đ"
-
-
-# =========================================================
-# KẾ HOẠCH GIAO DỊCH
-# CHỈ DÙNG KHI TÍN HIỆU = MUA
-# =========================================================
-
-def calculate_trade_plan(row):
-
-    entry = row["Close"]
-
-    atr = row["ATR14"]
-
-    if (
-        pd.isna(entry)
-        or pd.isna(atr)
-        or atr <= 0
-    ):
-
-        return {
-            "entry": entry,
-            "stop": None,
-            "target": None,
-        }
-
-    stop = (
-        entry
-        - SL_ATR_MULTIPLIER * atr
-    )
-
-    target = (
-        entry
-        + TP_RR * (entry - stop)
-    )
-
-    return {
-        "entry": entry,
-        "stop": stop,
-        "target": target,
-    }
+    except Exception:
+        return str(value)
 
 
-# =========================================================
-# /START
-# =========================================================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    message = """
-👋 CHÀO MỪNG ĐẾN VỚI STOCK ANALYTICS BOT
-
-📊 Bot hỗ trợ:
-• Phân tích tín hiệu MUA / BÁN / GIỮ
-• Tra cứu cổ phiếu
-• Theo dõi tín hiệu thị trường
-
-📚 Gõ /help để xem toàn bộ lệnh.
-
-⚠️ LƯU Ý RỦI RO
-
-Các tín hiệu được tạo dựa trên dữ liệu
-và mô hình phân tích của hệ thống.
-
-Thông tin chỉ mang tính tham khảo,
-không phải lời khuyên đầu tư.
-"""
-
-    await update.message.reply_text(
-        message
-    )
-
-
-# =========================================================
-# /HELP
-# =========================================================
-
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    message = """
-📚 DANH SÁCH LỆNH CƠ BẢN
-
-/start
-Giới thiệu và lưu ý rủi ro.
-
-/help
-Xem danh sách lệnh.
-
-/tinhieu
-Xem danh sách tín hiệu MUA/BÁN hôm nay.
-
-/tracuu [Mã CK]
-Phân tích chi tiết 1 mã cổ phiếu.
-
-Ví dụ:
-/tracuu FPT
-
-⚠️ Tín hiệu chỉ mang tính tham khảo,
-không phải khuyến nghị đầu tư.
-"""
-
-    await update.message.reply_text(
-        message
-    )
-
-
-# =========================================================
-# /TINHIEU
-# =========================================================
-
-async def tinhieu(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    await update.message.reply_text(
-        "🔎 Đang cập nhật và phân tích tín hiệu hôm nay..."
-    )
+def format_percent(value):
+    if pd.isna(value):
+        return "N/A"
 
     try:
+        return f"{float(value):.1f}%"
+    except Exception:
+        return str(value)
 
-        df = get_market_data()
 
-        if df is None or df.empty:
+# ============================================================
+# KEYBOARD
+# ============================================================
 
-            await update.message.reply_text(
-                "❌ Không có dữ liệu thị trường."
+def main_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔎 TRA CỨU",
+                callback_data="search"
             )
-
-            return
-
-        result = process_universe(df)
-
-        if result.empty:
-
-            await update.message.reply_text(
-                "❌ Không thể phân tích dữ liệu."
+        ],
+        [
+            InlineKeyboardButton(
+                "❓ HƯỚNG DẪN",
+                callback_data="help"
             )
+        ],
+    ]
 
-            return
-
-        latest_date = result["Date"].max()
-
-        latest = result[
-            (result["Date"] == latest_date)
-            & (result["DataSufficient"])
-        ].copy()
-
-        buy_list = latest[
-            latest["Signal"] == "MUA"
-        ].sort_values(
-            "RS",
-            ascending=False
-        )
-
-        sell_list = latest[
-            latest["Signal"] == "BÁN"
-        ].sort_values(
-            "RS",
-            ascending=False
-        )
-
-        message = (
-            "📊 TÍN HIỆU THỊ TRƯỜNG\n"
-            f"📅 Ngày: "
-            f"{latest_date.strftime('%d/%m/%Y')}\n\n"
-        )
-
-        # -------------------------
-        # MUA
-        # -------------------------
-
-        message += "🟢 TÍN HIỆU MUA\n"
-
-        if buy_list.empty:
-
-            message += (
-                "Không có tín hiệu MUA.\n"
-            )
-
-        else:
-
-            for _, row in buy_list.head(15).iterrows():
-
-                message += (
-                    f"• {row['Symbol']} "
-                    f"| Giá: {format_price(row['Close'])} "
-                    f"| RS: {row['RS']:.1f}\n"
-                )
-
-        # -------------------------
-        # BÁN
-        # -------------------------
-
-        message += "\n🔴 TÍN HIỆU BÁN\n"
-
-        if sell_list.empty:
-
-            message += (
-                "Không có tín hiệu BÁN.\n"
-            )
-
-        else:
-
-            for _, row in sell_list.head(15).iterrows():
-
-                message += (
-                    f"• {row['Symbol']} "
-                    f"| Giá: {format_price(row['Close'])} "
-                    f"| RS: {row['RS']:.1f}\n"
-                )
-
-        message += (
-            "\n💡 Dùng /tracuu [Mã CK] "
-            "để xem phân tích chi tiết."
-        )
-
-        message += (
-            "\n\n⚠️ Tín hiệu chỉ mang tính tham khảo."
-        )
-
-        await update.message.reply_text(
-            message
-        )
-
-    except Exception as e:
-
-        print(
-            f"Lỗi /tinhieu: {e}"
-        )
-
-        await update.message.reply_text(
-            f"❌ Không thể lấy tín hiệu:\n{e}"
-        )
+    return InlineKeyboardMarkup(keyboard)
 
 
-# =========================================================
-# LẤY DỮ LIỆU MỘT MÃ
-# =========================================================
+def stock_detail_keyboard(symbol):
+    """
+    Các chức năng sau khi đã tra một mã.
+    Tất cả đều gắn với đúng mã đang xem.
+    """
+
+    symbol = str(symbol).strip().upper()
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "⭐ SMARTSCORE",
+                callback_data=f"smartscore:{symbol}"
+            ),
+            InlineKeyboardButton(
+                "🏭 NGÀNH",
+                callback_data=f"sector:{symbol}"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "📈 BIỂU ĐỒ",
+                callback_data=f"chart:{symbol}"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔎 MÃ KHÁC",
+                callback_data="search_other"
+            ),
+            InlineKeyboardButton(
+                "🏠 TRANG CHỦ",
+                callback_data="home"
+            ),
+        ],
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def back_to_stock_keyboard(symbol):
+    symbol = str(symbol).strip().upper()
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "⭐ SMARTSCORE",
+                callback_data=f"smartscore:{symbol}"
+            ),
+            InlineKeyboardButton(
+                "🏭 NGÀNH",
+                callback_data=f"sector:{symbol}"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "📈 BIỂU ĐỒ",
+                callback_data=f"chart:{symbol}"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔎 MÃ KHÁC",
+                callback_data="search_other"
+            ),
+            InlineKeyboardButton(
+                "🏠 TRANG CHỦ",
+                callback_data="home"
+            ),
+        ],
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ============================================================
+# /START
+# ============================================================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    message = (
+        "📊 FINBOT\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Xin chào! 👋\n\n"
+        "FINBOT hỗ trợ phân tích cổ phiếu dựa trên "
+        "dữ liệu thị trường và bộ tiêu chí của hệ thống.\n\n"
+        "🔎 Tra cứu một mã cổ phiếu để xem:\n"
+        "• Tín hiệu MUA / BÁN / GIỮ\n"
+        "• Kế hoạch xử lý\n"
+        "• SmartScore\n"
+        "• Ngành\n"
+        "• Biểu đồ kỹ thuật\n\n"
+        "⚠️ Kết quả là phân tích tự động, "
+        "không phải khuyến nghị đầu tư."
+    )
+
+    await update.message.reply_text(
+        message,
+        reply_markup=main_keyboard()
+    )
+
+
+# ============================================================
+# /HELP
+# ============================================================
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    message = (
+        "❓ HƯỚNG DẪN FINBOT\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "🔎 TRA CỨU\n"
+        "Nhập:\n"
+        "/tracuu [Mã CK]\n\n"
+        "Ví dụ:\n"
+        "/tracuu MCH\n\n"
+        "Sau khi phân tích, bạn có thể chọn:\n"
+        "⭐ SmartScore — xem điểm của mã\n"
+        "🏭 Ngành — xem ngành của mã\n"
+        "📈 Biểu đồ — xem biểu đồ kỹ thuật\n\n"
+        "⚠️ Đây là kết quả phân tích tự động, "
+        "không phải khuyến nghị đầu tư."
+    )
+
+    await update.message.reply_text(
+        message,
+        reply_markup=main_keyboard()
+    )
+
+
+# ============================================================
+# LẤY DỮ LIỆU + PHÂN TÍCH MỘT MÃ
+# ============================================================
 
 def get_latest_stock(symbol):
 
-    df = get_market_data()
+    symbol = str(symbol).strip().upper()
+
+    if not symbol:
+        return None
+
+    df = get_stock_data(symbol)
 
     if df is None or df.empty:
         return None
 
-    symbol = symbol.strip().upper()
-
-    df = df[
-        df["Symbol"]
-        .astype(str)
-        .str.upper()
-        == symbol
-    ].copy()
-
-    if df.empty:
+    try:
+        result = process_universe(df)
+    except Exception as e:
+        print(f"Lỗi process {symbol}: {e}")
         return None
 
-    result = process_universe(df)
-
-    if result.empty:
+    if result is None or result.empty:
         return None
 
-    result = result.sort_values(
-        "Date"
-    )
+    result = result.sort_values("Date")
 
-    return result.iloc[-1]
+    row = result.iloc[-1]
+
+    return row
 
 
-# =========================================================
-# TẠO NỘI DUNG PHÂN TÍCH
-# =========================================================
+# ============================================================
+# TÍNH KẾ HOẠCH GIAO DỊCH
+# ============================================================
 
-def build_analysis_message(row):
+def calculate_trade_plan(row):
 
-    symbol = str(
-        row["Symbol"]
-    ).upper()
+    close = row.get("Close")
+    atr14 = row.get("ATR14")
+    signal = str(row.get("Signal", "GIỮ"))
 
-    signal = row["Signal"]
+    if pd.isna(close):
+        return (
+            "📌 KẾ HOẠCH GIAO DỊCH\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Chưa đủ dữ liệu để tính kế hoạch."
+        )
 
-    close = row["Close"]
+    try:
+        close = float(close)
+    except Exception:
+        return (
+            "📌 KẾ HOẠCH GIAO DỊCH\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Giá hiện tại không hợp lệ."
+        )
 
-    rs = row["RS"]
+    if pd.isna(atr14) or float(atr14) <= 0:
+        return (
+            "📌 KẾ HOẠCH GIAO DỊCH\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"• Điểm vào tham chiếu: {format_price(close)}\n"
+            "• Chưa đủ dữ liệu ATR14 để tính cắt lỗ và mục tiêu."
+        )
 
-    ema20 = row["EMA20"]
+    atr14 = float(atr14)
 
-    ema50 = row["EMA50"]
-
-    sma200 = row["SMA200"]
-
-    atr14 = row["ATR14"]
-
-    adx14 = row["ADX14"]
-
-    gtgd = row["MedianGTGD20"]
-
-    trend_score = row.get(
-        "TrendScore",
-        None
-    )
-
-    volume_score = row.get(
-        "VolumeScore",
-        None
-    )
-
-    # =====================================================
-    # ICON
-    # =====================================================
+    # ========================================================
+    # KẾ HOẠCH CHO TÍN HIỆU MUA
+    # ========================================================
 
     if signal == "MUA":
 
-        signal_icon = "🟢"
+        entry_price = close
 
-    elif signal == "BÁN":
+        # Cắt lỗ = 3 ATR
+        stop_loss = entry_price - (3 * atr14)
 
-        signal_icon = "🔴"
+        # R:R = 1:2
+        target_price = entry_price + (6 * atr14)
 
-    elif signal == "GIỮ":
+        # Không cho giá cắt lỗ âm
+        stop_loss = max(stop_loss, 0)
 
-        signal_icon = "🟡"
+        risk_amount = entry_price - stop_loss
+        target_profit = target_price - entry_price
 
-    else:
+        if entry_price > 0:
 
-        signal_icon = "⚪"
+            risk_percent = (
+                risk_amount / entry_price
+            ) * 100
 
-    # =====================================================
-    # XU HƯỚNG
-    # =====================================================
-
-    if (
-        pd.notna(close)
-        and pd.notna(sma200)
-        and close > sma200
-        and pd.notna(ema20)
-        and pd.notna(ema50)
-        and ema20 > ema50
-    ):
-
-        trend = "📈 Xu hướng tăng"
-
-    elif (
-        pd.notna(close)
-        and pd.notna(sma200)
-        and close < sma200
-    ):
-
-        trend = "📉 Xu hướng giảm"
-
-    else:
-
-        trend = "↔️ Xu hướng chưa rõ"
-
-    # =====================================================
-    # HEADER
-    # =====================================================
-
-    message = (
-        f"📊 PHÂN TÍCH {symbol}\n"
-        f"📅 Ngày: "
-        f"{pd.to_datetime(row['Date']).strftime('%d/%m/%Y')}\n\n"
-
-        f"{signal_icon} TÍN HIỆU: {signal}\n"
-        f"💰 Giá hiện tại: {format_price(close)}\n"
-        f"{trend}\n\n"
-
-        "📐 CHỈ BÁO KỸ THUẬT\n"
-        f"• EMA20: {format_price(ema20)}\n"
-        f"• EMA50: {format_price(ema50)}\n"
-        f"• SMA200: {format_price(sma200)}\n"
-        f"• ATR14: {format_price(atr14)}\n"
-        f"• ADX14: {adx14:.2f}\n"
-    )
-
-    if pd.notna(rs):
-
-        message += (
-            f"• RS: {rs:.1f}\n"
-        )
-
-    # =====================================================
-    # THANH KHOẢN
-    # =====================================================
-
-    message += "\n💧 THANH KHOẢN\n"
-
-    message += (
-        f"• Median GTGD20: "
-        f"{format_money(gtgd)}\n"
-    )
-
-    if bool(
-        row.get(
-            "Liquidity_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Trạng thái: ✅ Đạt yêu cầu\n"
-        )
-
-    else:
-
-        message += (
-            "• Trạng thái: ❌ Chưa đạt\n"
-        )
-
-    # =====================================================
-    # XÁC NHẬN TÍN HIỆU
-    # =====================================================
-
-    message += (
-        "\n📊 XÁC NHẬN TÍN HIỆU\n"
-    )
-
-    if bool(row.get("EMA_ok", False)):
-
-        message += (
-            "• EMA20 > EMA50: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• EMA20 > EMA50: ❌\n"
-        )
-
-    if bool(row.get("SMA200_ok", False)):
-
-        message += (
-            "• Giá > SMA200: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Giá > SMA200: ❌\n"
-        )
-
-    if bool(row.get("Donchian_ok", False)):
-
-        message += (
-            "• Donchian breakout: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Donchian breakout: ❌\n"
-        )
-
-    if bool(
-        row.get(
-            "VolumeBreakout_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Volume breakout: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Volume breakout: ❌\n"
-        )
-
-    if bool(row.get("CLV_ok", False)):
-
-        message += (
-            "• CLV ≥ 0.6: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• CLV ≥ 0.6: ❌\n"
-        )
-
-    if bool(
-        row.get(
-            "AntiChasing_ok",
-            False
-        )
-    ):
-
-        message += (
-            "• Anti-chasing: ✅\n"
-        )
-
-    else:
-
-        message += (
-            "• Anti-chasing: ❌\n"
-        )
-
-    if pd.notna(trend_score):
-
-        message += (
-            f"\n📈 Trend Score: "
-            f"{int(trend_score)}/3\n"
-        )
-
-    if pd.notna(volume_score):
-
-        message += (
-            f"📊 Volume Score: "
-            f"{int(volume_score)}/2\n"
-        )
-
-    # =====================================================
-    # KẾ HOẠCH THEO TÍN HIỆU
-    # =====================================================
-
-    if signal == "MUA":
-
-        plan = calculate_trade_plan(row)
-
-        message += (
-            "\n🎯 KẾ HOẠCH GIAO DỊCH\n"
-        )
-
-        message += (
-            f"• Điểm vào: "
-            f"{format_price(plan['entry'])}\n"
-            f"• Stop Loss: "
-            f"{format_price(plan['stop'])}\n"
-            f"• Mục tiêu: "
-            f"{format_price(plan['target'])}\n"
-        )
-
-    elif signal == "BÁN":
-
-        message += (
-            "\n🔴 KẾ HOẠCH XỬ LÝ\n"
-        )
-
-        message += (
-            f"• Giá hiện tại: "
-            f"{format_price(close)}\n"
-            "• Trạng thái: Ưu tiên thoát vị thế\n"
-            "• Không mở vị thế mua mới theo tín hiệu hiện tại.\n"
-        )
-
-    elif signal == "GIỮ":
-
-        message += (
-            "\n🟡 TRẠNG THÁI\n"
-        )
-
-        message += (
-            f"• Giá hiện tại: "
-            f"{format_price(close)}\n"
-            "• Chưa đủ điều kiện để mở vị thế mới.\n"
-        )
-
-    # =====================================================
-    # NHẬN ĐỊNH
-    # =====================================================
-
-    message += "\n📝 NHẬN ĐỊNH\n"
-
-    if signal == "MUA":
-
-        message += (
-            "Các điều kiện thanh khoản, "
-            "relative strength và xu hướng "
-            "đang hỗ trợ tín hiệu MUA."
-        )
-
-    elif signal == "BÁN":
-
-        reasons = []
-
-        if (
-            pd.notna(sma200)
-            and close < sma200
-        ):
-
-            reasons.append(
-                "giá đóng cửa dưới SMA200"
-            )
-
-        if (
-            pd.notna(rs)
-            and rs < 50
-        ):
-
-            reasons.append(
-                "RS dưới 50"
-            )
-
-        if reasons:
-
-            message += (
-                "Tín hiệu BÁN do "
-                + " và ".join(reasons)
-                + "."
-            )
+            target_percent = (
+                target_profit / entry_price
+            ) * 100
 
         else:
 
-            message += (
-                "Xuất hiện điều kiện BÁN "
-                "theo hệ thống."
-            )
+            risk_percent = 0
+            target_percent = 0
 
-    elif signal == "GIỮ":
-
-        message += (
-            "Chưa đủ điều kiện để phát sinh "
-            "tín hiệu MUA hoặc BÁN."
+        return (
+            "📌 KẾ HOẠCH GIAO DỊCH\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"🟢 Điểm vào: {format_price(entry_price)}\n"
+            f"🛑 Cắt lỗ: {format_price(stop_loss)}\n"
+            f"🎯 Mục tiêu: {format_price(target_price)}\n\n"
+            f"📉 Rủi ro: {risk_percent:.2f}%\n"
+            f"📈 Lợi nhuận mục tiêu: {target_percent:.2f}%\n"
+            "⚖️ Risk/Reward: 1:2\n\n"
+            "Cắt lỗ được xác định theo 3 × ATR14."
         )
+
+    # ========================================================
+    # KẾ HOẠCH CHO TÍN HIỆU GIỮ
+    # ========================================================
+
+    if signal == "GIỮ":
+
+        entry_price = close
+
+        stop_loss = entry_price - (3 * atr14)
+        target_price = entry_price + (6 * atr14)
+
+        stop_loss = max(stop_loss, 0)
+
+        risk_percent = (
+            (entry_price - stop_loss)
+            / entry_price
+            * 100
+        )
+
+        target_percent = (
+            (target_price - entry_price)
+            / entry_price
+            * 100
+        )
+
+        return (
+            "📌 KẾ HOẠCH THAM CHIẾU\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"• Điểm tham chiếu: {format_price(entry_price)}\n"
+            f"• Cắt lỗ tham khảo: {format_price(stop_loss)}\n"
+            f"• Mục tiêu tham khảo: {format_price(target_price)}\n\n"
+            f"• Rủi ro: {risk_percent:.2f}%\n"
+            f"• Lợi nhuận mục tiêu: {target_percent:.2f}%\n"
+            "• Risk/Reward: 1:2\n\n"
+            "⚠️ Chưa có tín hiệu MUA."
+        )
+
+    # ========================================================
+    # KẾ HOẠCH CHO TÍN HIỆU BÁN
+    # ========================================================
+
+    if signal == "BÁN":
+
+        return (
+            "📌 KẾ HOẠCH XỬ LÝ\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔴 Trạng thái: Ưu tiên thoát vị thế\n"
+            f"💰 Giá hiện tại: {format_price(close)}\n\n"
+            "Hệ thống đang phát tín hiệu BÁN nên "
+            "không thiết lập điểm vào mua mới."
+        )
+
+    return (
+        "📌 KẾ HOẠCH GIAO DỊCH\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"💰 Giá hiện tại: {format_price(close)}\n"
+        "Chưa xác định được kế hoạch giao dịch."
+    )
+# ============================================================
+# NỘI DUNG PHÂN TÍCH
+# ============================================================
+
+def build_analysis_message(row):
+
+    symbol = str(row.get("Symbol", "")).upper()
+
+    close = row.get("Close")
+    ema20 = row.get("EMA20")
+    ema50 = row.get("EMA50")
+    sma200 = row.get("SMA200")
+    rs = row.get("RS")
+    adx = row.get("ADX14")
+    atr_ratio = row.get("ATR14_Ratio")
+    liquidity = row.get("Liquidity_ok")
+    signal = str(row.get("Signal", "GIỮ"))
+
+    if signal == "MUA":
+        signal_icon = "🟢"
+    elif signal == "BÁN":
+        signal_icon = "🔴"
+    else:
+        signal_icon = "🟡"
+
+    lines = [
+        f"📊 PHÂN TÍCH — {symbol}",
+        "━━━━━━━━━━━━━━━━━━",
+        "",
+        f"💰 Giá hiện tại: {format_price(close)}",
+        "",
+        f"{signal_icon} TÍN HIỆU: {signal}",
+        "",
+    ]
+
+    if signal == "MUA":
+        reason = []
+
+        if not pd.isna(rs) and float(rs) >= 60:
+            reason.append("RS đạt điều kiện")
+
+        if (
+            not pd.isna(ema20)
+            and not pd.isna(ema50)
+            and float(ema20) > float(ema50)
+        ):
+            reason.append("EMA20 > EMA50")
+
+        if (
+            not pd.isna(close)
+            and not pd.isna(sma200)
+            and float(close) > float(sma200)
+        ):
+            reason.append("Giá > SMA200")
+
+        if reason:
+            lines.append("📝 NHẬN ĐỊNH")
+            lines.append("Tín hiệu MUA do " + ", ".join(reason) + ".")
+
+    elif signal == "BÁN":
+
+        if not pd.isna(close) and not pd.isna(sma200):
+            if float(close) < float(sma200):
+                lines.append("📝 NHẬN ĐỊNH")
+                lines.append("Tín hiệu BÁN do giá đóng cửa dưới SMA200.")
+            elif not pd.isna(rs) and float(rs) < 50:
+                lines.append("📝 NHẬN ĐỊNH")
+                lines.append("Tín hiệu BÁN do RS dưới 50.")
 
     else:
-
-        message += (
-            "Dữ liệu chưa đủ để đưa ra tín hiệu."
+        lines.append("📝 NHẬN ĐỊNH")
+        lines.append(
+            "Chưa xuất hiện đầy đủ điều kiện để phát tín hiệu MUA hoặc BÁN."
         )
 
-    # =====================================================
-    # CẢNH BÁO
-    # =====================================================
+    lines.append("")
 
-    message += (
-        "\n\n⚠️ Đây là kết quả phân tích tự động, "
+    lines.append(calculate_trade_plan(row))
+
+    lines.append("")
+    lines.append(
+        "⚠️ Đây là kết quả phân tích tự động, "
         "không phải khuyến nghị đầu tư."
+    )
+
+    return "\n".join(lines)
+
+
+# ============================================================
+# SMARTSCORE
+# ============================================================
+
+def build_stock_smartscore(row):
+
+    symbol = str(row.get("Symbol", "")).upper()
+
+    score = row.get("SmartScore")
+
+    if pd.isna(score):
+        score = row.get("smartscore")
+
+    if pd.isna(score):
+        score = 0
+
+    try:
+        score = float(score)
+    except Exception:
+        score = 0
+
+    rs_score = 0
+    ema_score = 0
+    sma_score = 0
+    liquidity_score = 0
+    adx_score = 0
+    anti_score = 0
+    high_score = 0
+
+    rs = row.get("RS")
+    ema20 = row.get("EMA20")
+    ema50 = row.get("EMA50")
+    close = row.get("Close")
+    sma200 = row.get("SMA200")
+    liquidity = row.get("Liquidity_ok")
+    adx = row.get("ADX14")
+    anti_chasing = row.get("AntiChasing")
+    near_high = row.get("PriceNearHigh_ok")
+
+    # --------------------------------------------------------
+    # Relative Strength — 30 điểm
+    # --------------------------------------------------------
+
+    if not pd.isna(rs):
+        try:
+            rs_score = min(max(float(rs) / 100 * 30, 0), 30)
+        except Exception:
+            rs_score = 0
+
+    # --------------------------------------------------------
+    # EMA20 / EMA50 — 20 điểm
+    # --------------------------------------------------------
+
+    if (
+        not pd.isna(ema20)
+        and not pd.isna(ema50)
+        and float(ema20) > float(ema50)
+    ):
+        ema_score = 20
+
+    # --------------------------------------------------------
+    # SMA200 — 15 điểm
+    # --------------------------------------------------------
+
+    if (
+        not pd.isna(close)
+        and not pd.isna(sma200)
+        and float(close) > float(sma200)
+    ):
+        sma_score = 15
+
+    # --------------------------------------------------------
+    # Liquidity — 15 điểm
+    # --------------------------------------------------------
+
+    if bool(liquidity):
+        liquidity_score = 15
+
+    # --------------------------------------------------------
+    # ADX — 10 điểm
+    # --------------------------------------------------------
+
+    if not pd.isna(adx):
+
+        try:
+            adx_value = float(adx)
+
+            if adx_value >= 20:
+                adx_score = 10
+            else:
+                adx_score = max(adx_value / 20 * 10, 0)
+
+        except Exception:
+            adx_score = 0
+
+    # --------------------------------------------------------
+    # Anti-chasing — 5 điểm
+    # --------------------------------------------------------
+
+    if not pd.isna(anti_chasing):
+
+        try:
+            anti_value = float(anti_chasing)
+
+            if anti_value <= 3:
+                anti_score = 5
+            elif anti_value <= 5:
+                anti_score = 2.5
+
+        except Exception:
+            anti_score = 0
+
+    # --------------------------------------------------------
+    # Near 252-high — 5 điểm
+    # --------------------------------------------------------
+
+    if bool(near_high):
+        high_score = 5
+
+    calculated_score = (
+        rs_score
+        + ema_score
+        + sma_score
+        + liquidity_score
+        + adx_score
+        + anti_score
+        + high_score
+    )
+
+    # Nếu module smartscore đã tính điểm thì ưu tiên điểm đó.
+    # Nếu không có thì dùng điểm tính lại ở trên.
+    if pd.isna(row.get("SmartScore")):
+        score = calculated_score
+
+    message = (
+        f"⭐ SMARTSCORE — {symbol}\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"🏆 Tổng điểm: {score:.1f}/100\n\n"
+        "Chi tiết:\n"
+        f"• Relative Strength: {rs_score:.1f}/30\n"
+        f"• EMA20 / EMA50: {ema_score:.1f}/20\n"
+        f"• SMA200: {sma_score:.1f}/15\n"
+        f"• Thanh khoản: {liquidity_score:.1f}/15\n"
+        f"• ADX: {adx_score:.1f}/10\n"
+        f"• Anti-chasing: {anti_score:.1f}/5\n"
+        f"• Gần đỉnh 252 phiên: {high_score:.1f}/5\n\n"
+        "SmartScore được tính theo bộ tiêu chí của hệ thống."
     )
 
     return message
 
 
-# =========================================================
-# /TRACUU
-# =========================================================
+# ============================================================
+# ĐỌC FILE NGÀNH
+# ============================================================
 
-async def tracuu(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+def load_sector_data():
+
+    if not os.path.exists(SECTOR_FILE):
+        print(f"Không tìm thấy file: {SECTOR_FILE}")
+        return pd.DataFrame()
+
+    try:
+
+        df = pd.read_csv(
+            SECTOR_FILE,
+            low_memory=False
+        )
+
+        if df.empty:
+            return pd.DataFrame()
+
+        df.columns = (
+            df.columns
+            .astype(str)
+            .str.strip()
+        )
+
+        return df
+
+    except Exception as e:
+
+        print(f"Lỗi đọc {SECTOR_FILE}: {e}")
+
+        return pd.DataFrame()
+
+
+def get_sector_column(df):
+
+    possible_columns = [
+        "sector_vi",
+        "Sector_VI",
+        "sector",
+        "Sector",
+        "nganh",
+        "Nganh",
+        "Ngành",
+    ]
+
+    for column in possible_columns:
+        if column in df.columns:
+            return column
+
+    return None
+
+
+def get_symbol_column(df):
+
+    possible_columns = [
+        "ticker",
+        "Ticker",
+        "Symbol",
+        "symbol",
+        "MaCoPhieu",
+        "MaCK",
+        "ma_ck",
+        "Mã cổ phiếu",
+        "Mã CK",
+    ]
+
+    for column in possible_columns:
+        if column in df.columns:
+            return column
+
+    return None
+
+
+def get_stock_sector(symbol):
+
+    symbol = str(symbol).strip().upper()
+
+    df = load_sector_data()
+
+    if df.empty:
+        return None
+
+    sector_column = get_sector_column(df)
+    symbol_column = get_symbol_column(df)
+
+    if sector_column is None or symbol_column is None:
+
+        print("Không tìm thấy cột mã hoặc cột ngành.")
+
+        print("Các cột hiện có:")
+        print(df.columns.tolist())
+
+        return None
+
+    matched = df[
+        df[symbol_column]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        == symbol
+    ]
+
+    if matched.empty:
+        return None
+
+    sector = matched.iloc[0][sector_column]
+
+    if pd.isna(sector):
+        return None
+
+    sector = str(sector).strip()
+
+    if not sector:
+        return None
+
+    # Nếu file đã chứa tiếng Việt
+    if sector in SECTOR_VI.values():
+        return sector
+
+    # Nếu file chứa tiếng Anh
+    if sector in SECTOR_VI:
+        return SECTOR_VI[sector]
+
+    if sector.lower() == "unknown":
+        return "Chưa phân loại"
+
+    return sector
+
+
+# ============================================================
+# HIỂN THỊ NGÀNH CỦA MÃ
+# ============================================================
+
+def build_sector_message(symbol):
+
+    symbol = str(symbol).strip().upper()
+
+    sector = get_stock_sector(symbol)
+
+    if sector is None:
+
+        return (
+            f"🏭 NGÀNH — {symbol}\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Chưa tìm thấy thông tin ngành cho mã này."
+        )
+
+    return (
+        f"🏭 NGÀNH — {symbol}\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"📌 Ngành: {sector}\n\n"
+        f"Mã {symbol} thuộc nhóm {sector}."
+    )
+
+
+# ============================================================
+# /TRACUU
+# ============================================================
+
+async def tracuu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
 
         await update.message.reply_text(
-            "❗ Vui lòng nhập mã cổ phiếu.\n\n"
+            "🔎 TRA CỨU CỔ PHIẾU\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Nhập mã cổ phiếu sau lệnh /tracuu.\n\n"
             "Ví dụ:\n"
-            "/tracuu FPT"
+            "/tracuu MCH"
         )
 
         return
 
-    symbol = context.args[0].upper()
+    symbol = context.args[0].strip().upper()
+
+    # Chỉ nhận mã đơn giản
+    if not symbol.isalnum():
+
+        await update.message.reply_text(
+            "⚠️ Mã cổ phiếu không hợp lệ.\n\n"
+            "Ví dụ: /tracuu MCH"
+        )
+
+        return
 
     await update.message.reply_text(
         f"🔎 Đang phân tích {symbol}..."
@@ -734,116 +875,351 @@ async def tracuu(
 
     try:
 
-        row = get_latest_stock(
-            symbol
-        )
-
-        if row is None:
-
-            await update.message.reply_text(
-                f"❌ Không tìm thấy dữ liệu "
-                f"cho {symbol}."
-            )
-
-            return
-
-        if not bool(
-            row.get(
-                "DataSufficient",
-                False
-            )
-        ):
-
-            await update.message.reply_text(
-                f"⚠️ {symbol} chưa có đủ dữ liệu "
-                "để phân tích."
-            )
-
-            return
-
-        message = build_analysis_message(
-            row
-        )
-
-        await update.message.reply_text(
-            message
-        )
+        row = get_latest_stock(symbol)
 
     except Exception as e:
 
-        print(
-            f"Lỗi /tracuu {symbol}: {e}"
-        )
+        print(f"Lỗi tra cứu {symbol}: {e}")
 
         await update.message.reply_text(
-            f"❌ Có lỗi khi phân tích "
-            f"{symbol}:\n{e}"
+            f"❌ Không thể phân tích {symbol}.\n\n"
+            f"Chi tiết lỗi: {e}"
         )
 
+        return
 
-# =========================================================
-# CHẠY BOT
-# =========================================================
+    if row is None:
+
+        await update.message.reply_text(
+            f"❌ Không tìm thấy dữ liệu phù hợp cho {symbol}.\n\n"
+            "Kiểm tra lại mã cổ phiếu và thử lại."
+        )
+
+        return
+
+    # Đảm bảo mã hiển thị đúng
+    if "Symbol" not in row.index:
+        row["Symbol"] = symbol
+
+    message = build_analysis_message(row)
+
+    await update.message.reply_text(
+        message,
+        reply_markup=stock_detail_keyboard(symbol)
+    )
+
+
+# ============================================================
+# XỬ LÝ BUTTON
+# ============================================================
+
+async def button_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    data = query.data
+
+    # --------------------------------------------------------
+    # TRA CỨU
+    # --------------------------------------------------------
+
+    if data == "search":
+
+        await query.message.reply_text(
+            "🔎 TRA CỨU CỔ PHIẾU\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Nhập:\n"
+            "/tracuu [Mã CK]\n\n"
+            "Ví dụ:\n"
+            "/tracuu MCH"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # HƯỚNG DẪN
+    # --------------------------------------------------------
+
+    if data == "help":
+
+        message = (
+            "❓ HƯỚNG DẪN FINBOT\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "🔎 TRA CỨU\n"
+            "Dùng lệnh:\n"
+            "/tracuu [Mã CK]\n\n"
+            "Ví dụ:\n"
+            "/tracuu MCH\n\n"
+            "Sau khi có kết quả, bạn có thể chọn:\n\n"
+            "⭐ SMARTSCORE\n"
+            "Xem điểm số của chính mã đang tra cứu.\n\n"
+            "🏭 NGÀNH\n"
+            "Xem ngành của chính mã đang tra cứu.\n\n"
+            "📈 BIỂU ĐỒ\n"
+            "Xem biểu đồ nến và các đường EMA/SMA.\n\n"
+            "⚠️ Kết quả là phân tích tự động, "
+            "không phải khuyến nghị đầu tư."
+        )
+
+        await query.message.reply_text(
+            message,
+            reply_markup=main_keyboard()
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # SMARTSCORE
+    # --------------------------------------------------------
+
+    if data.startswith("smartscore:"):
+
+        symbol = data.split(":", 1)[1].strip().upper()
+
+        await query.message.reply_text(
+            f"⭐ Đang tính SmartScore {symbol}..."
+        )
+
+        try:
+
+            row = get_latest_stock(symbol)
+
+        except Exception as e:
+
+            print(f"Lỗi SmartScore {symbol}: {e}")
+
+            await query.message.reply_text(
+                f"❌ Không thể lấy SmartScore cho {symbol}."
+            )
+
+            return
+
+        if row is None:
+
+            await query.message.reply_text(
+                f"❌ Không tìm thấy dữ liệu {symbol}."
+            )
+
+            return
+
+        await query.message.reply_text(
+            build_stock_smartscore(row),
+            reply_markup=back_to_stock_keyboard(symbol)
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # NGÀNH
+    # --------------------------------------------------------
+
+    if data.startswith("sector:"):
+
+        symbol = data.split(":", 1)[1].strip().upper()
+
+        message = build_sector_message(symbol)
+
+        await query.message.reply_text(
+            message,
+            reply_markup=back_to_stock_keyboard(symbol)
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # BIỂU ĐỒ
+    # --------------------------------------------------------
+
+    if data.startswith("chart:"):
+
+        symbol = data.split(":", 1)[1].strip().upper()
+
+        await query.message.reply_text(
+            f"📈 Đang tạo biểu đồ {symbol}..."
+        )
+
+        try:
+
+            image = create_candlestick_chart(
+                symbol,
+                periods=120
+            )
+
+            await query.message.reply_photo(
+                photo=image,
+                caption=(
+                    f"📊 {symbol} - Biểu đồ nến 120 phiên\n"
+                    "EMA20 • EMA50 • SMA200"
+                ),
+                reply_markup=back_to_stock_keyboard(symbol)
+            )
+
+        except Exception as e:
+
+            print(f"Lỗi tạo chart {symbol}: {e}")
+
+            await query.message.reply_text(
+                f"❌ Không thể tạo biểu đồ {symbol}.\n\n"
+                f"Chi tiết: {e}",
+                reply_markup=back_to_stock_keyboard(symbol)
+            )
+
+        return
+
+    # --------------------------------------------------------
+    # MÃ KHÁC
+    # --------------------------------------------------------
+
+    if data == "search_other":
+
+        await query.message.reply_text(
+            "🔎 TRA CỨU MÃ KHÁC\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Nhập mã cổ phiếu cần phân tích.\n\n"
+            "Ví dụ:\n"
+            "/tracuu VIC"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # TRANG CHỦ
+    # --------------------------------------------------------
+
+    if data == "home":
+
+        await query.message.reply_text(
+            "🏠 FINBOT\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Chọn chức năng:",
+            reply_markup=main_keyboard()
+        )
+
+        return
+
+
+# ============================================================
+# NHẬN TIN NHẮN TEXT
+# ============================================================
+
+async def text_stock_search(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    text = update.message.text.strip()
+
+    if not text:
+        return
+
+    # Cho phép người dùng nhập trực tiếp:
+    # MCH
+    # VIC
+    # FPT
+    #
+    # Nhưng không xử lý các câu quá dài.
+
+    if len(text) > 10:
+        return
+
+    symbol = text.upper()
+
+    if not symbol.isalnum():
+        return
+
+    await update.message.reply_text(
+        f"🔎 Đang phân tích {symbol}..."
+    )
+
+    try:
+
+        row = get_latest_stock(symbol)
+
+    except Exception as e:
+
+        print(f"Lỗi tra cứu {symbol}: {e}")
+
+        await update.message.reply_text(
+            f"❌ Không thể phân tích {symbol}."
+        )
+
+        return
+
+    if row is None:
+
+        await update.message.reply_text(
+            f"❌ Không tìm thấy dữ liệu cho {symbol}.\n\n"
+            "Bạn có thể thử lại bằng:\n"
+            f"/tracuu {symbol}"
+        )
+
+        return
+
+    message = build_analysis_message(row)
+
+    await update.message.reply_text(
+        message,
+        reply_markup=stock_detail_keyboard(symbol)
+    )
+
+
+# ============================================================
+# RUN BOT
+# ============================================================
 
 def run_bot():
 
-    if not TELEGRAM_BOT_TOKEN:
+    if not TOKEN:
 
         raise ValueError(
-            "Chưa cấu hình TELEGRAM_BOT_TOKEN "
-            "trong biến môi trường."
+            "Chưa có TELEGRAM_BOT_TOKEN trong Environment Variables."
         )
 
     application = (
         Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .connect_timeout(30)
-        .read_timeout(60)
-        .write_timeout(60)
-        .pool_timeout(60)
+        .token(TOKEN)
         .build()
     )
 
-    # =====================================================
-    # COMMANDS
-    # =====================================================
-
+    # Commands
     application.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
+        CommandHandler("start", start)
     )
 
     application.add_handler(
-        CommandHandler(
-            "help",
-            help_command
-        )
+        CommandHandler("help", help_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "tinhieu",
-            tinhieu
-        )
+        CommandHandler("tracuu", tracuu)
     )
 
+    # Buttons
     application.add_handler(
-        CommandHandler(
-            "tracuu",
-            tracuu
+        CallbackQueryHandler(button_callback)
+    )
+
+    # Text search
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            text_stock_search
         )
     )
 
-    # =====================================================
-    # START BOT
-    # =====================================================
+    print("FINBOT đang chạy...")
 
-    print(
-        "🤖 Telegram Bot đang chạy..."
-    )
+    application.run_polling()
 
-    application.run_polling(
-        drop_pending_updates=True
-    )
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+    run_bot()

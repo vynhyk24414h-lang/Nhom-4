@@ -3,6 +3,7 @@ import pandas as pd
 from src.module_thu_thap_du_lieu.cleaner import clean_data
 from src.module_tinh_toan_xu_ly.indicators import calculate_indicators
 from src.module_tinh_toan_xu_ly.rs import calculate_relative_strength
+from src.module_bot.smartscore import add_smartscore
 
 
 def process_universe(df):
@@ -229,8 +230,6 @@ def process_universe(df):
     #
     # Chandelier KHÔNG dùng để tạo SELL
     # toàn thị trường.
-    # Chandelier được dùng khi đang nắm
-    # vị thế trong backtest.
     # =========================
 
     df["SELL"] = (
@@ -273,6 +272,16 @@ def process_universe(df):
         ~df["DataSufficient"],
         "Signal"
     ] = "THIẾU DỮ LIỆU"
+
+    # =========================
+    # 18. SMARTSCORE
+    # =========================
+    #
+    # SmartScore là điểm đánh giá riêng,
+    # không thay đổi BUY / SELL / Signal.
+    # =========================
+
+    df = add_smartscore(df)
 
     return df
 
@@ -321,6 +330,7 @@ def process_stock(df):
         "symbol": symbol,
         "close": latest["Close"],
         "rs": latest["RS"],
+        "smartscore": latest["SmartScore"],
         "reason": build_reason(latest)
     }
 
