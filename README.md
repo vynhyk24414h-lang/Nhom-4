@@ -7,7 +7,6 @@ Dự án này là một hệ thống Fintech Bot tự động hóa hoàn toàn t
 Để chạy được dự án này, máy tính của bạn cần cài đặt sẵn:
 - **Python:** Phiên bản 3.9 trở lên.
 - **Tài khoản Telegram:** Để tạo Bot và nhận tin nhắn.
-- **Tài khoản FireAnt:** Để lấy Cookie xác thực API.
 
 ---
 
